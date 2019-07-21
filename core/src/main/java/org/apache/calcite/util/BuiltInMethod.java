@@ -114,6 +114,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TimeZone;
@@ -280,6 +281,8 @@ public enum BuiltInMethod {
   REVERSE(SqlFunctions.class, "reverse", String.class),
   LEFT(SqlFunctions.class, "left", String.class, int.class),
   RIGHT(SqlFunctions.class, "right", String.class, int.class),
+  TO_BASE64(SqlFunctions.class, "toBase64", String.class),
+  FROM_BASE64(SqlFunctions.class, "fromBase64", String.class),
   JSONIZE(JsonFunctions.class, "jsonize", Object.class),
   DEJSONIZE(JsonFunctions.class, "dejsonize", String.class),
   JSON_VALUE_EXPRESSION(JsonFunctions.class, "jsonValueExpression",
@@ -348,6 +351,7 @@ public enum BuiltInMethod {
   RTRIM(SqlFunctions.class, "rtrim", String.class),
   LIKE(SqlFunctions.class, "like", String.class, String.class),
   SIMILAR(SqlFunctions.class, "similar", String.class, String.class),
+  POSIX_REGEX(SqlFunctions.class, "posixRegex", String.class, String.class, Boolean.class),
   IS_TRUE(SqlFunctions.class, "isTrue", Boolean.class),
   IS_NOT_FALSE(SqlFunctions.class, "isNotFalse", Boolean.class),
   NOT(SqlFunctions.class, "not", Boolean.class),
@@ -410,6 +414,14 @@ public enum BuiltInMethod {
   UNIX_TIMESTAMP_CEIL(DateTimeUtils.class, "unixTimestampCeil",
       TimeUnitRange.class, long.class),
   LAST_DAY(SqlFunctions.class, "lastDay", int.class),
+  DAYNAME_WITH_TIMESTAMP(SqlFunctions.class,
+      "dayNameWithTimestamp", long.class, Locale.class),
+  DAYNAME_WITH_DATE(SqlFunctions.class,
+      "dayNameWithDate", int.class, Locale.class),
+  MONTHNAME_WITH_TIMESTAMP(SqlFunctions.class,
+      "monthNameWithTimestamp", long.class, Locale.class),
+  MONTHNAME_WITH_DATE(SqlFunctions.class,
+      "monthNameWithDate", int.class, Locale.class),
   CURRENT_TIMESTAMP(SqlFunctions.class, "currentTimestamp", DataContext.class),
   CURRENT_TIME(SqlFunctions.class, "currentTime", DataContext.class),
   CURRENT_DATE(SqlFunctions.class, "currentDate", DataContext.class),
@@ -418,6 +430,7 @@ public enum BuiltInMethod {
   TIME_ZONE(SqlFunctions.class, "timeZone", DataContext.class),
   USER(SqlFunctions.class, "user", DataContext.class),
   SYSTEM_USER(SqlFunctions.class, "systemUser", DataContext.class),
+  LOCALE(SqlFunctions.class, "locale", DataContext.class),
   BOOLEAN_TO_STRING(SqlFunctions.class, "toString", boolean.class),
   JDBC_ARRAY_TO_LIST(SqlFunctions.class, "arrayToList", java.sql.Array.class),
   OBJECT_TO_STRING(Object.class, "toString"),

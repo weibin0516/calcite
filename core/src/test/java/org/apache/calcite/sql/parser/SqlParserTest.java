@@ -976,7 +976,7 @@ public class SqlParserTest {
     //   you that != is SQL's not-equals operator; those texts are false;
     //   it's one of those unstampoutable urban myths."
     // Therefore, we only support != with certain SQL conformance levels.
-    checkExpFails("'abc'!=123",
+    checkExpFails("'abc'^!=^123",
         "Bang equal '!=' is not allowed under the current SQL conformance level");
   }
 
@@ -2227,7 +2227,7 @@ public class SqlParserTest {
   @Test public void testSetMinus() {
     final String pattern =
         "MINUS is not allowed under the current SQL conformance level";
-    final String sql = "select col1 from table1 MINUS select col1 from table2";
+    final String sql = "select col1 from table1 ^MINUS^ select col1 from table2";
     sql(sql).fails(pattern);
 
     conformance = SqlConformanceEnum.ORACLE_10;
@@ -2236,7 +2236,7 @@ public class SqlParserTest {
         + "EXCEPT\n"
         + "SELECT `COL1`\n"
         + "FROM `TABLE2`)";
-    sql(sql).ok(expected);
+    sql(sql).sansCarets().ok(expected);
 
     final String sql2 =
         "select col1 from table1 MINUS ALL select col1 from table2";
@@ -2449,21 +2449,21 @@ public class SqlParserTest {
     final String pattern =
         "APPLY operator is not allowed under the current SQL conformance level";
     final String sql = "select * from dept\n"
-        + "cross apply table(ramp(deptno)) as t(a)";
+        + "cross apply table(ramp(deptno)) as t(a^)^";
     sql(sql).fails(pattern);
 
     conformance = SqlConformanceEnum.SQL_SERVER_2008;
     final String expected = "SELECT *\n"
         + "FROM `DEPT`\n"
         + "CROSS JOIN LATERAL TABLE(`RAMP`(`DEPTNO`)) AS `T` (`A`)";
-    sql(sql).ok(expected);
+    sql(sql).sansCarets().ok(expected);
 
     // Supported in Oracle 12 but not Oracle 10
     conformance = SqlConformanceEnum.ORACLE_10;
     sql(sql).fails(pattern);
 
     conformance = SqlConformanceEnum.ORACLE_12;
-    sql(sql).ok(expected);
+    sql(sql).sansCarets().ok(expected);
   }
 
   /** Tests OUTER APPLY. */
@@ -2548,6 +2548,29 @@ public class SqlParserTest {
             + "from emp as x tablesample bernoulli(50)",
         "SELECT *\n"
             + "FROM `EMP` AS `X` TABLESAMPLE BERNOULLI(50.0)");
+
+    check(
+        "select * "
+            + "from emp as x "
+            + "tablesample bernoulli(50) REPEATABLE(10) ",
+        "SELECT *\n"
+            + "FROM `EMP` AS `X` TABLESAMPLE BERNOULLI(50.0) REPEATABLE(10)");
+
+    // test repeatable with invalid int literal.
+    checkFails(
+        "select * "
+            + "from emp as x "
+            + "tablesample bernoulli(50) REPEATABLE(^100000000000000000000^) ",
+        "Literal '100000000000000000000' "
+            + "can not be parsed to type 'java\\.lang\\.Integer'");
+
+    // test repeatable with invalid negative int literal.
+    checkFails(
+        "select * "
+            + "from emp as x "
+            + "tablesample bernoulli(50) REPEATABLE(-^100000000000000000000^) ",
+        "Literal '100000000000000000000' "
+            + "can not be parsed to type 'java\\.lang\\.Integer'");
   }
 
   @Test public void testLiteral() {
@@ -2824,7 +2847,7 @@ public class SqlParserTest {
     conformance = SqlConformanceEnum.DEFAULT;
     final String error = "'LIMIT start, count' is not allowed under the "
         + "current SQL conformance level";
-    sql("select a from foo limit 1,2")
+    sql("select a from foo limit 1,^2^")
         .fails(error);
 
     // "limit all" is equivalent to no limit
@@ -7135,7 +7158,7 @@ public class SqlParserTest {
   }
 
   @Test public void testGeometry() {
-    checkExpFails("cast(null as geometry)",
+    checkExpFails("cast(null as ^geometry^)",
         "Geo-spatial extensions and the GEOMETRY data type are not enabled");
     conformance = SqlConformanceEnum.LENIENT;
     checkExp("cast(null as geometry)", "CAST(NULL AS GEOMETRY)");

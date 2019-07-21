@@ -25,6 +25,7 @@ import org.apache.calcite.sql.SqlOperatorTable;
 import org.apache.calcite.sql.type.OperandTypes;
 import org.apache.calcite.sql.type.ReturnTypes;
 import org.apache.calcite.sql.type.SqlReturnTypeInference;
+import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.type.SqlTypeTransforms;
 
 import java.util.ArrayList;
@@ -153,6 +154,22 @@ public abstract class SqlLibraryOperators {
   @LibraryOperator(libraries = {MYSQL})
   public static final SqlFunction JSON_STORAGE_SIZE = new SqlJsonStorageSizeFunction();
 
+  /** The "MONTHNAME(datetime)" function; returns the name of the month,
+   * in the current locale, of a TIMESTAMP or DATE argument. */
+  @LibraryOperator(libraries = {MYSQL})
+  public static final SqlFunction MONTHNAME =
+      new SqlFunction("MONTHNAME", SqlKind.OTHER_FUNCTION,
+          ReturnTypes.VARCHAR_2000, null, OperandTypes.DATETIME,
+          SqlFunctionCategory.TIMEDATE);
+
+  /** The "DAYNAME(datetime)" function; returns the name of the day of the week,
+   * in the current locale, of a TIMESTAMP or DATE argument. */
+  @LibraryOperator(libraries = {MYSQL})
+  public static final SqlFunction DAYNAME =
+      new SqlFunction("DAYNAME", SqlKind.OTHER_FUNCTION,
+          ReturnTypes.VARCHAR_2000, null, OperandTypes.DATETIME,
+          SqlFunctionCategory.TIMEDATE);
+
   @LibraryOperator(libraries = {MYSQL, POSTGRESQL})
   public static final SqlFunction LEFT =
       new SqlFunction("LEFT", SqlKind.OTHER_FUNCTION,
@@ -213,6 +230,28 @@ public abstract class SqlLibraryOperators {
           ReturnTypes.ARG0_NULLABLE_VARYING,
           null,
           OperandTypes.CHARACTER,
+          SqlFunctionCategory.STRING);
+
+  @LibraryOperator(libraries = {MYSQL})
+  public static final SqlFunction FROM_BASE64 =
+      new SqlFunction(
+          "FROM_BASE64",
+          SqlKind.OTHER_FUNCTION,
+          ReturnTypes.cascade(
+                  ReturnTypes.explicit(SqlTypeName.VARBINARY), SqlTypeTransforms.TO_NULLABLE),
+          null,
+          OperandTypes.STRING,
+          SqlFunctionCategory.STRING);
+
+  @LibraryOperator(libraries = {MYSQL})
+  public static final SqlFunction TO_BASE64 =
+      new SqlFunction(
+          "TO_BASE64",
+          SqlKind.OTHER_FUNCTION,
+          ReturnTypes.cascade(
+                  ReturnTypes.explicit(SqlTypeName.VARCHAR), SqlTypeTransforms.TO_NULLABLE),
+          null,
+          OperandTypes.or(OperandTypes.STRING, OperandTypes.BINARY),
           SqlFunctionCategory.STRING);
 }
 

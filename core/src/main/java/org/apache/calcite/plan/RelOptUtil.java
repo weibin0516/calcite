@@ -33,7 +33,6 @@ import org.apache.calcite.rel.RelWriter;
 import org.apache.calcite.rel.core.Aggregate;
 import org.apache.calcite.rel.core.AggregateCall;
 import org.apache.calcite.rel.core.Calc;
-import org.apache.calcite.rel.core.Correlate;
 import org.apache.calcite.rel.core.CorrelationId;
 import org.apache.calcite.rel.core.EquiJoin;
 import org.apache.calcite.rel.core.Filter;
@@ -105,6 +104,7 @@ import org.apache.calcite.util.mapping.MappingType;
 import org.apache.calcite.util.mapping.Mappings;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.LinkedHashMultimap;
 import com.google.common.collect.Lists;
@@ -454,7 +454,7 @@ public abstract class RelOptUtil {
 
       final RelFactories.FilterFactory factory =
           RelFactories.DEFAULT_FILTER_FACTORY;
-      ret = factory.createFilter(ret, conditionExp);
+      ret = factory.createFilter(ret, conditionExp, ImmutableSet.of());
     }
 
     if (extraExpr != null) {
@@ -603,13 +603,13 @@ public abstract class RelOptUtil {
   public static RelNode createFilter(RelNode child, RexNode condition) {
     final RelFactories.FilterFactory factory =
         RelFactories.DEFAULT_FILTER_FACTORY;
-    return factory.createFilter(child, condition);
+    return factory.createFilter(child, condition, ImmutableSet.of());
   }
 
   @Deprecated // to be removed before 2.0
   public static RelNode createFilter(RelNode child, RexNode condition,
       RelFactories.FilterFactory filterFactory) {
-    return filterFactory.createFilter(child, condition);
+    return filterFactory.createFilter(child, condition, ImmutableSet.of());
   }
 
   /** Creates a filter, using the default filter factory,
@@ -632,7 +632,7 @@ public abstract class RelOptUtil {
     if (condition == null) {
       return child;
     } else {
-      return filterFactory.createFilter(child, condition);
+      return filterFactory.createFilter(child, condition, ImmutableSet.of());
     }
   }
 
@@ -682,7 +682,7 @@ public abstract class RelOptUtil {
 
     final RelFactories.FilterFactory factory =
         RelFactories.DEFAULT_FILTER_FACTORY;
-    return factory.createFilter(rel, condition);
+    return factory.createFilter(rel, condition, ImmutableSet.of());
   }
 
   /**
@@ -2510,7 +2510,8 @@ public abstract class RelOptUtil {
         joinRel.getInputs().get(1).getRowType().getFieldList();
     final int nFieldsRight = rightFields.size();
 
-    assert nTotalFields == (returnsJustFirstInput(joinRel)
+    // SemiJoin, CorrelateSemiJoin, CorrelateAntiJoin: right fields are not returned
+    assert nTotalFields == (!joinType.projectsRight()
             ? nSysFields + nFieldsLeft
             : nSysFields + nFieldsLeft + nFieldsRight);
 
@@ -2597,14 +2598,6 @@ public abstract class RelOptUtil {
 
     // Did anything change?
     return !filtersToRemove.isEmpty();
-  }
-
-  private static boolean returnsJustFirstInput(RelNode joinRel) {
-    // SemiJoin, CorrelateSemiJoin, CorrelateAntiJoin: right fields are not returned
-    return (joinRel instanceof Join
-                && !((Join) joinRel).getJoinType().projectsRight())
-            || (joinRel instanceof Correlate
-                && !((Correlate) joinRel).getJoinType().projectsRight());
   }
 
   private static RexNode shiftFilter(
@@ -3367,14 +3360,17 @@ public abstract class RelOptUtil {
     relBuilder.push(
         originalJoin.copy(originalJoin.getTraitSet(),
             joinCond, left, right, joinType, originalJoin.isSemiJoinDone()));
-
     if (!extraLeftExprs.isEmpty() || !extraRightExprs.isEmpty()) {
+      final int totalFields = joinType.projectsRight()
+          ? leftCount + extraLeftExprs.size() + rightCount + extraRightExprs.size()
+          : leftCount + extraLeftExprs.size();
+      final int[] mappingRanges = joinType.projectsRight()
+          ? new int[] { 0, 0, leftCount, leftCount, leftCount + extraLeftExprs.size(), rightCount }
+          : new int[] { 0, 0, leftCount };
       Mappings.TargetMapping mapping =
           Mappings.createShiftMapping(
-              leftCount + extraLeftExprs.size()
-                  + rightCount + extraRightExprs.size(),
-              0, 0, leftCount,
-              leftCount, leftCount + extraLeftExprs.size(), rightCount);
+              totalFields,
+              mappingRanges);
       relBuilder.project(relBuilder.fields(mapping.inverse()));
     }
     return relBuilder.build();
@@ -3446,7 +3442,6 @@ public abstract class RelOptUtil {
       for (int i = 0; i < operands.size(); i++) {
         RexNode operand = operands.get(i);
         final int left2 = leftCount + extraLeftExprs.size();
-        final int right2 = rightCount + extraRightExprs.size();
         final RexNode e =
             pushDownEqualJoinConditions(
                 operand,

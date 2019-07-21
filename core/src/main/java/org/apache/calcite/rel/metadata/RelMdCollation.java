@@ -65,6 +65,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.SortedSet;
 import java.util.TreeSet;
+import java.util.stream.Collectors;
 
 /**
  * RelMdCollation supplies a default implementation of
@@ -96,7 +97,6 @@ public class RelMdCollation
    * {@link org.apache.calcite.rel.core.Intersect},
    * {@link org.apache.calcite.rel.core.Minus},
    * {@link org.apache.calcite.rel.core.Join},
-   * {@link org.apache.calcite.rel.core.SemiJoin},
    * {@link org.apache.calcite.rel.core.Correlate}
    * do not in general return sorted results
    * (but implementations using particular algorithms may).
@@ -153,14 +153,6 @@ public class RelMdCollation
     return ImmutableList.copyOf(
         RelMdCollation.enumerableCorrelate(mq, join.getLeft(), join.getRight(),
             join.getJoinType()));
-  }
-
-  @Deprecated // to be removed before 1.21
-  public ImmutableList<RelCollation> collations(
-      org.apache.calcite.adapter.enumerable.EnumerableSemiJoin join,
-      RelMetadataQuery mq) {
-    return ImmutableList.copyOf(
-        RelMdCollation.enumerableSemiJoin(mq, join.getLeft(), join.getRight()));
   }
 
   public ImmutableList<RelCollation> collations(Sort sort,
@@ -240,7 +232,13 @@ public class RelMdCollation
    * {@link org.apache.calcite.rel.core.Calc}'s collation. */
   public static List<RelCollation> calc(RelMetadataQuery mq, RelNode input,
       RexProgram program) {
-    return program.getCollations(mq.collations(input));
+    final List<RexNode> projects =
+        program
+            .getProjectList()
+            .stream()
+            .map((p) -> program.expandLocalRef(p))
+            .collect(Collectors.toList());
+    return project(mq, input, projects);
   }
 
   /** Helper method to determine a {@link Project}'s collation. */

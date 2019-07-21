@@ -41,6 +41,7 @@ import org.apache.calcite.util.Util;
 
 import org.apache.commons.codec.language.Soundex;
 
+import com.google.common.base.Splitter;
 import com.google.common.base.Strings;
 
 import java.lang.reflect.Field;
@@ -51,8 +52,11 @@ import java.math.RoundingMode;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.text.DecimalFormat;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Base64;
 import java.util.Collection;
 import java.util.Date;
 import java.util.HashMap;
@@ -70,6 +74,8 @@ import java.util.regex.Pattern;
 import javax.annotation.Nonnull;
 
 import static org.apache.calcite.util.Static.RESOURCE;
+
+import static java.nio.charset.StandardCharsets.UTF_8;
 
 /**
  * Helper methods to implement SQL functions in generated code.
@@ -90,12 +96,25 @@ public class SqlFunctions {
 
   private static final TimeZone LOCAL_TZ = TimeZone.getDefault();
 
+  private static final DateTimeFormatter ROOT_DAY_FORMAT =
+      DateTimeFormatter.ofPattern("EEEE", Locale.ROOT);
+
+  private static final DateTimeFormatter ROOT_MONTH_FORMAT =
+      DateTimeFormatter.ofPattern("MMMM", Locale.ROOT);
+
   private static final Soundex SOUNDEX = new Soundex();
 
   private static final int SOUNDEX_LENGTH = 4;
 
+  private static final Pattern FROM_BASE64_REGEXP = Pattern.compile("[\\t\\n\\r\\s]");
+
   private static final Function1<List<Object>, Enumerable<Object>> LIST_AS_ENUMERABLE =
       Linq4j::asEnumerable;
+
+  // It's important to have XDigit before Digit to match XDigit first
+  // (i.e. see the posixRegex method)
+  private static final String[] POSIX_CHARACTER_CLASSES = new String[] { "Lower", "Upper", "ASCII",
+      "Alpha", "XDigit", "Digit", "Alnum", "Punct", "Graph", "Print", "Blank", "Cntrl", "Space" };
 
   private static final Function1<Object[], Enumerable<Object[]>> ARRAY_CARTESIAN_PRODUCT =
       lists -> {
@@ -121,6 +140,36 @@ public class SqlFunctions {
       ThreadLocal.withInitial(HashMap::new);
 
   private SqlFunctions() {
+  }
+
+  /** SQL TO_BASE64(string) function. */
+  public static String toBase64(String string) {
+    return toBase64_(string.getBytes(UTF_8));
+  }
+
+  /** SQL TO_BASE64(string) function for binary string. */
+  public static String toBase64(ByteString string) {
+    return toBase64_(string.getBytes());
+  }
+
+  private static String toBase64_(byte[] bytes) {
+    String base64 = Base64.getEncoder().encodeToString(bytes);
+    StringBuilder str = new StringBuilder(base64.length() + base64.length() / 76);
+    Splitter.fixedLength(76).split(base64).iterator().forEachRemaining(s -> {
+      str.append(s);
+      str.append("\n");
+    });
+    return str.substring(0, str.length() - 1);
+  }
+
+  /** SQL FROM_BASE64(string) function. */
+  public static ByteString fromBase64(String base64) {
+    try {
+      base64 = FROM_BASE64_REGEXP.matcher(base64).replaceAll("");
+      return new ByteString(Base64.getDecoder().decode(base64));
+    } catch (IllegalArgumentException e) {
+      return null;
+    }
   }
 
   /** SQL SUBSTRING(string FROM ... FOR ...) function. */
@@ -425,16 +474,16 @@ public class SqlFunctions {
   /** SQL {@code OVERLAY} function applied to binary strings. */
   public static ByteString overlay(ByteString s, ByteString r, int start) {
     return s.substring(0, start - 1)
-           .concat(r)
-           .concat(s.substring(start - 1 + r.length()));
+        .concat(r)
+        .concat(s.substring(start - 1 + r.length()));
   }
 
   /** SQL {@code OVERLAY} function applied to binary strings. */
   public static ByteString overlay(ByteString s, ByteString r, int start,
       int length) {
     return s.substring(0, start - 1)
-           .concat(r)
-           .concat(s.substring(start - 1 + length));
+        .concat(r)
+        .concat(s.substring(start - 1 + length));
   }
 
   /** SQL {@code LIKE} function. */
@@ -459,6 +508,19 @@ public class SqlFunctions {
   public static boolean similar(String s, String pattern, String escape) {
     final String regex = Like.sqlToRegexSimilar(pattern, escape);
     return Pattern.matches(regex, s);
+  }
+
+  public static boolean posixRegex(String s, String regex, Boolean caseSensitive) {
+    // Replace existing character classes with java equivalent ones
+    String originalRegex = regex;
+    String[] existingExpressions = Arrays.stream(POSIX_CHARACTER_CLASSES)
+        .filter(v -> originalRegex.contains(v.toLowerCase(Locale.ROOT))).toArray(String[]::new);
+    for (String v : existingExpressions) {
+      regex = regex.replaceAll(v.toLowerCase(Locale.ROOT), "\\\\p{" + v + "}");
+    }
+
+    int flags = caseSensitive ? 0 : Pattern.CASE_INSENSITIVE;
+    return Pattern.compile(regex, flags).matcher(s).find();
   }
 
   // =
@@ -1701,8 +1763,8 @@ public class SqlFunctions {
   public static float toFloat(Object o) {
     return o instanceof Float ? (Float) o
         : o instanceof Number ? toFloat((Number) o)
-            : o instanceof String ? toFloat((String) o)
-                : (Float) cannotConvert(o, float.class);
+        : o instanceof String ? toFloat((String) o)
+        : (Float) cannotConvert(o, float.class);
   }
 
   public static double toDouble(String s) {
@@ -2008,6 +2070,78 @@ public class SqlFunctions {
     return DateTimeUtils.ymdToUnixDate(y0, m0, last);
   }
 
+  /**
+   * SQL {@code DAYNAME} function, applied to a TIMESTAMP argument.
+   *
+   * @param timestamp Milliseconds from epoch
+   * @param locale Locale
+   * @return Name of the weekday in the given locale
+   */
+  public static String dayNameWithTimestamp(long timestamp, Locale locale) {
+    return timeStampToLocalDate(timestamp)
+        .format(ROOT_DAY_FORMAT.withLocale(locale));
+  }
+
+  /**
+   * SQL {@code DAYNAME} function, applied to a DATE argument.
+   *
+   * @param date Days since epoch
+   * @param locale Locale
+   * @return Name of the weekday in the given locale
+   */
+  public static String dayNameWithDate(int date, Locale locale) {
+    return dateToLocalDate(date)
+        .format(ROOT_DAY_FORMAT.withLocale(locale));
+  }
+
+  /**
+   * SQL {@code MONTHNAME} function, applied to a TIMESTAMP argument.
+   *
+   * @param timestamp Milliseconds from epoch
+   * @param locale Locale
+   * @return Name of the month in the given locale
+   */
+  public static String monthNameWithTimestamp(long timestamp, Locale locale) {
+    return timeStampToLocalDate(timestamp)
+        .format(ROOT_MONTH_FORMAT.withLocale(locale));
+  }
+
+  /**
+   * SQL {@code MONTHNAME} function, applied to a DATE argument.
+   *
+   * @param date Days from epoch
+   * @param locale Locale
+   * @return Name of the month in the given locale
+   */
+  public static String monthNameWithDate(int date, Locale locale) {
+    return dateToLocalDate(date)
+        .format(ROOT_MONTH_FORMAT.withLocale(locale));
+  }
+
+  /**
+   * Converts a date (days since epoch) to a {@link LocalDate}.
+   *
+   * @param date days since epoch
+   * @return localDate
+   */
+  private static LocalDate dateToLocalDate(int date) {
+    int y0 = (int) DateTimeUtils.unixDateExtract(TimeUnitRange.YEAR, date);
+    int m0 = (int) DateTimeUtils.unixDateExtract(TimeUnitRange.MONTH, date);
+    int d0 = (int) DateTimeUtils.unixDateExtract(TimeUnitRange.DAY, date);
+    return LocalDate.of(y0, m0, d0);
+  }
+
+  /**
+   * Converts a timestamp (milliseconds since epoch) to a {@link LocalDate}.
+   *
+   * @param timestamp milliseconds from epoch
+   * @return localDate
+   */
+  private static LocalDate timeStampToLocalDate(long timestamp) {
+    int date = (int) (timestamp / DateTimeUtils.MILLIS_PER_DAY);
+    return dateToLocalDate(date);
+  }
+
   /** SQL {@code CURRENT_TIMESTAMP} function. */
   @NonDeterministic
   public static long currentTimestamp(DataContext root) {
@@ -2065,6 +2199,11 @@ public class SqlFunctions {
   @Deterministic
   public static String systemUser(DataContext root) {
     return Objects.requireNonNull(DataContext.Variable.SYSTEM_USER.get(root));
+  }
+
+  @NonDeterministic
+  public static Locale locale(DataContext root) {
+    return (Locale) DataContext.Variable.LOCALE.get(root);
   }
 
   /** SQL {@code TRANSLATE(string, search_chars, replacement_chars)}
@@ -2315,7 +2454,7 @@ public class SqlFunctions {
         return (Function1) LIST_AS_ENUMERABLE;
       } else {
         return row -> p2(new Object[] { row }, fieldCounts, withOrdinality,
-              inputTypes);
+            inputTypes);
       }
     }
     return lists -> p2((Object[]) lists, fieldCounts, withOrdinality,
