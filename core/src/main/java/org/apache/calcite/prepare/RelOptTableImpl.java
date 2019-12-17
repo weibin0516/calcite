@@ -114,6 +114,16 @@ public class RelOptTableImpl extends Prepare.AbstractPreparingTable {
         c -> expression, null);
   }
 
+  public static RelOptTableImpl create(
+      RelOptSchema schema,
+      RelDataType rowType,
+      List<String> names,
+      Table table,
+      Expression expression) {
+    return new RelOptTableImpl(schema, rowType, names, table,
+        c -> expression, table.getStatistic().getRowCount());
+  }
+
   public static RelOptTableImpl create(RelOptSchema schema, RelDataType rowType,
       Table table, Path path) {
     final SchemaPlus schemaPlus = MySchemaPlus.create(path);
@@ -307,6 +317,10 @@ public class RelOptTableImpl extends Prepare.AbstractPreparingTable {
       return table.getStatistic().isKey(columns);
     }
     return false;
+  }
+
+  public List<ImmutableBitSet> getKeys() {
+    return table.getStatistic().getKeys();
   }
 
   public List<RelReferentialConstraint> getReferentialConstraints() {
@@ -524,5 +538,3 @@ public class RelOptTableImpl extends Prepare.AbstractPreparingTable {
     }
   }
 }
-
-// End RelOptTableImpl.java

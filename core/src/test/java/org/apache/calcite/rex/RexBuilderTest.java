@@ -38,7 +38,7 @@ import org.apache.calcite.util.Util;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -48,12 +48,12 @@ import java.util.TimeZone;
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.notNullValue;
 import static org.hamcrest.CoreMatchers.nullValue;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.Is.is;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertThat;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Test for {@link RexBuilder}.
@@ -87,8 +87,7 @@ public class RexBuilderTest {
   /**
    * Test RexBuilder.ensureType()
    */
-  @Test
-  public void testEnsureTypeWithAny() {
+  @Test public void testEnsureTypeWithAny() {
     final RelDataTypeFactory typeFactory = new SqlTypeFactoryImpl(RelDataTypeSystem.DEFAULT);
     RexBuilder builder = new RexBuilder(typeFactory);
 
@@ -103,8 +102,7 @@ public class RexBuilderTest {
   /**
    * Test RexBuilder.ensureType()
    */
-  @Test
-  public void testEnsureTypeWithItself() {
+  @Test public void testEnsureTypeWithItself() {
     final RelDataTypeFactory typeFactory = new SqlTypeFactoryImpl(RelDataTypeSystem.DEFAULT);
     RexBuilder builder = new RexBuilder(typeFactory);
 
@@ -119,8 +117,7 @@ public class RexBuilderTest {
   /**
    * Test RexBuilder.ensureType()
    */
-  @Test
-  public void testEnsureTypeWithDifference() {
+  @Test public void testEnsureTypeWithDifference() {
     final RelDataTypeFactory typeFactory = new SqlTypeFactoryImpl(RelDataTypeSystem.DEFAULT);
     RexBuilder builder = new RexBuilder(typeFactory);
 
@@ -721,5 +718,3 @@ public class RexBuilderTest {
   }
 
 }
-
-// End RexBuilderTest.java

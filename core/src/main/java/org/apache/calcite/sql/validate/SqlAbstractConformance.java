@@ -102,6 +102,8 @@ public abstract class SqlAbstractConformance implements SqlConformance {
   public boolean allowExtendedTrim() {
     return SqlConformanceEnum.DEFAULT.allowExtendedTrim();
   }
-}
 
-// End SqlAbstractConformance.java
+  public boolean allowPluralTimeUnits() {
+    return SqlConformanceEnum.DEFAULT.allowPluralTimeUnits();
+  }
+}

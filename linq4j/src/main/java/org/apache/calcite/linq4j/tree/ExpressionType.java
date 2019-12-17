@@ -583,8 +583,17 @@ public enum ExpressionType {
    */
   Declaration,
 
+  /**
+   * For loop.
+   */
   For,
 
+  /** For-each loop, "for (Type i : expression) body". */
+  ForEach,
+
+  /**
+   * While loop.
+   */
   While;
 
   final String op;
@@ -617,5 +626,3 @@ public enum ExpressionType {
     this.rprec = (20 - prec) * 2 + (right ? 0 : 1);
   }
 }
-
-// End ExpressionType.java

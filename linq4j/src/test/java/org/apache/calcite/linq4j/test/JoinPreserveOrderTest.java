@@ -23,8 +23,6 @@ import org.apache.calcite.linq4j.Linq4j;
 import org.apache.calcite.linq4j.function.Function1;
 import org.apache.calcite.linq4j.function.Function2;
 
-import static org.apache.calcite.linq4j.function.Functions.nullsComparator;
-
 import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -35,8 +33,10 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import static org.apache.calcite.linq4j.function.Functions.nullsComparator;
+
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Test validating the order preserving properties of join algorithms in
@@ -210,6 +210,13 @@ public final class JoinPreserveOrderTest {
     testJoin(semiJoin(), AssertOrder.PRESERVED, AssertOrder.IGNORED);
   }
 
+  @Test public void testCorrelateBatchJoin() {
+    testJoin(
+        correlateBatchJoin(JoinType.INNER),
+        AssertOrder.PRESERVED,
+        AssertOrder.IGNORED);
+  }
+
   @Test public void testAntiDefaultJoinPreservesOrderOfLeftInput() {
     testJoin(antiJoin(), AssertOrder.PRESERVED, AssertOrder.IGNORED);
   }
@@ -289,6 +296,22 @@ public final class JoinPreserveOrderTest {
             dept -> dept.deptno).select(emp -> Arrays.asList(emp.eid, null));
   }
 
+  private JoinAlgorithm<Employee, Department, List<Integer>> correlateBatchJoin(
+      JoinType joinType) {
+    return (left, right) ->
+        EnumerableDefaults.correlateBatchJoin(
+            joinType,
+            left,
+            emp -> right.where(dept ->
+                    dept.deptno != null
+                        && (dept.deptno.equals(emp.get(0).deptno)
+                        || dept.deptno.equals(emp.get(1).deptno)
+                        || dept.deptno.equals(emp.get(2).deptno))),
+            RESULT_SELECTOR,
+            (emp, dept) -> dept.deptno.equals(emp.deptno),
+             3);
+  }
+
   /**
    * Different assertions for the result of the join.
    */
@@ -296,15 +319,15 @@ public final class JoinPreserveOrderTest {
     PRESERVED {
       @Override <E> void check(final List<E> expected, final List<E> actual,
           final boolean nullsFirst) {
-        assertTrue("Order is not preserved. Expected:<" + expected + "> but was:<" + actual + ">",
-            isOrderPreserved(expected, actual, nullsFirst));
+        assertTrue(isOrderPreserved(expected, actual, nullsFirst),
+            () -> "Order is not preserved. Expected:<" + expected + "> but was:<" + actual + ">");
       }
     },
     DESTROYED {
       @Override <E> void check(final List<E> expected, final List<E> actual,
           final boolean nullsFirst) {
-        assertFalse("Order is not destroyed. Expected:<" + expected + "> but was:<" + actual + ">",
-            isOrderPreserved(expected, actual, nullsFirst));
+        assertFalse(isOrderPreserved(expected, actual, nullsFirst),
+            () -> "Order is not destroyed. Expected:<" + expected + "> but was:<" + actual + ">");
       }
     },
     IGNORED {
@@ -392,6 +415,7 @@ public final class JoinPreserveOrderTest {
       new Employee(120, "Ilias", 30),
       new Employee(130, "Ruben", 40),
       new Employee(140, "Tanguy", 50),
+      new Employee(145, "Khawla", 40),
       new Employee(150, "Andrew", -10),
       // Nulls on name
       new Employee(160, null, 60),
@@ -430,5 +454,3 @@ public final class JoinPreserveOrderTest {
   };
 
 }
-
-// End JoinPreserveOrderTest.java

@@ -21,6 +21,7 @@ import org.apache.calcite.adapter.enumerable.AggregateLambdaFactory;
 import org.apache.calcite.adapter.enumerable.BasicAggregateLambdaFactory;
 import org.apache.calcite.adapter.enumerable.BasicLazyAccumulator;
 import org.apache.calcite.adapter.enumerable.LazyAggregateLambdaFactory;
+import org.apache.calcite.adapter.enumerable.MatchUtils;
 import org.apache.calcite.adapter.enumerable.SourceSorter;
 import org.apache.calcite.adapter.java.ReflectiveSchema;
 import org.apache.calcite.adapter.jdbc.JdbcSchema;
@@ -36,6 +37,7 @@ import org.apache.calcite.linq4j.Enumerator;
 import org.apache.calcite.linq4j.ExtendedEnumerable;
 import org.apache.calcite.linq4j.JoinType;
 import org.apache.calcite.linq4j.Linq4j;
+import org.apache.calcite.linq4j.MemoryFactory;
 import org.apache.calcite.linq4j.QueryProvider;
 import org.apache.calcite.linq4j.Queryable;
 import org.apache.calcite.linq4j.function.EqualityComparer;
@@ -74,17 +76,21 @@ import org.apache.calcite.rel.metadata.BuiltInMetadata.UniqueKeys;
 import org.apache.calcite.rel.metadata.Metadata;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.runtime.ArrayBindable;
+import org.apache.calcite.runtime.Automaton;
 import org.apache.calcite.runtime.BinarySearch;
 import org.apache.calcite.runtime.Bindable;
 import org.apache.calcite.runtime.Enumerables;
 import org.apache.calcite.runtime.FlatLists;
 import org.apache.calcite.runtime.JsonFunctions;
+import org.apache.calcite.runtime.Matcher;
+import org.apache.calcite.runtime.Pattern;
 import org.apache.calcite.runtime.RandomFunction;
 import org.apache.calcite.runtime.ResultSetEnumerable;
 import org.apache.calcite.runtime.SortedMultiMap;
 import org.apache.calcite.runtime.SqlFunctions;
 import org.apache.calcite.runtime.SqlFunctions.FlatProductInputType;
 import org.apache.calcite.runtime.Utilities;
+import org.apache.calcite.runtime.XmlFunctions;
 import org.apache.calcite.schema.FilterableTable;
 import org.apache.calcite.schema.ModifiableTable;
 import org.apache.calcite.schema.ProjectableFilterableTable;
@@ -118,6 +124,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TimeZone;
+import java.util.function.BiPredicate;
+import java.util.function.Consumer;
+import java.util.function.Predicate;
 import javax.sql.DataSource;
 
 /**
@@ -158,20 +167,42 @@ public enum BuiltInMethod {
       ResultSetEnumerable.PreparedStatementEnricher.class),
   CREATE_ENRICHER(ResultSetEnumerable.class, "createEnricher", Integer[].class,
       DataContext.class),
-  HASH_JOIN(ExtendedEnumerable.class, "hashJoin", Enumerable.class, Function1.class,
-      Function1.class, Function2.class),
+  HASH_JOIN(ExtendedEnumerable.class, "hashJoin", Enumerable.class,
+      Function1.class,
+      Function1.class, Function2.class, EqualityComparer.class,
+      boolean.class, boolean.class, Predicate2.class),
+  MATCH(Enumerables.class, "match", Enumerable.class, Function1.class,
+      Matcher.class, Enumerables.Emitter.class, int.class, int.class),
+  PATTERN_BUILDER(Utilities.class, "patternBuilder"),
+  PATTERN_BUILDER_SYMBOL(Pattern.PatternBuilder.class, "symbol", String.class),
+  PATTERN_BUILDER_SEQ(Pattern.PatternBuilder.class, "seq"),
+  PATTERN_BUILDER_BUILD(Pattern.PatternBuilder.class, "build"),
+  PATTERN_TO_AUTOMATON(Pattern.PatternBuilder.class, "automaton"),
+  MATCHER_BUILDER(Matcher.class, "builder", Automaton.class),
+  MATCHER_BUILDER_ADD(Matcher.Builder.class, "add", String.class,
+      Predicate.class),
+  MATCHER_BUILDER_BUILD(Matcher.Builder.class, "build"),
+  MATCH_UTILS_LAST_WITH_SYMBOL(MatchUtils.class, "lastWithSymbol", String.class,
+      List.class, List.class, int.class),
+  EMITTER_EMIT(Enumerables.Emitter.class, "emit", List.class, List.class,
+      List.class, int.class, Consumer.class),
   MERGE_JOIN(EnumerableDefaults.class, "mergeJoin", Enumerable.class,
-      Enumerable.class, Function1.class, Function1.class, Function2.class,
+      Enumerable.class, Function1.class, Function1.class, Predicate2.class, Function2.class,
       boolean.class, boolean.class),
   SLICE0(Enumerables.class, "slice0", Enumerable.class),
   SEMI_JOIN(EnumerableDefaults.class, "semiJoin", Enumerable.class,
-      Enumerable.class, Function1.class, Function1.class),
+      Enumerable.class, Function1.class, Function1.class,
+      EqualityComparer.class, Predicate2.class),
   ANTI_JOIN(EnumerableDefaults.class, "antiJoin", Enumerable.class,
-      Enumerable.class, Function1.class, Function1.class),
+      Enumerable.class, Function1.class, Function1.class,
+      EqualityComparer.class, Predicate2.class),
   NESTED_LOOP_JOIN(EnumerableDefaults.class, "nestedLoopJoin", Enumerable.class,
       Enumerable.class, Predicate2.class, Function2.class, JoinType.class),
   CORRELATE_JOIN(ExtendedEnumerable.class, "correlateJoin",
       JoinType.class, Function1.class, Function2.class),
+  CORRELATE_BATCH_JOIN(EnumerableDefaults.class, "correlateBatchJoin",
+      JoinType.class, Enumerable.class, Function1.class, Function2.class,
+      Predicate2.class, int.class),
   SELECT(ExtendedEnumerable.class, "select", Function1.class),
   SELECT2(ExtendedEnumerable.class, "select", Function2.class),
   SELECT_MANY(ExtendedEnumerable.class, "selectMany", Function1.class),
@@ -191,12 +222,12 @@ public enum BuiltInMethod {
       Comparator.class),
   UNION(ExtendedEnumerable.class, "union", Enumerable.class),
   CONCAT(ExtendedEnumerable.class, "concat", Enumerable.class),
-  REPEAT_UNION_ALL(EnumerableDefaults.class, "repeatUnionAll", Enumerable.class,
-      Enumerable.class, int.class),
+  REPEAT_UNION(EnumerableDefaults.class, "repeatUnion", Enumerable.class,
+      Enumerable.class, int.class, boolean.class, EqualityComparer.class),
   LAZY_COLLECTION_SPOOL(EnumerableDefaults.class, "lazyCollectionSpool", Collection.class,
       Enumerable.class),
-  INTERSECT(ExtendedEnumerable.class, "intersect", Enumerable.class),
-  EXCEPT(ExtendedEnumerable.class, "except", Enumerable.class),
+  INTERSECT(ExtendedEnumerable.class, "intersect", Enumerable.class, boolean.class),
+  EXCEPT(ExtendedEnumerable.class, "except", Enumerable.class, boolean.class),
   SKIP(ExtendedEnumerable.class, "skip", int.class),
   TAKE(ExtendedEnumerable.class, "take", int.class),
   SINGLETON_ENUMERABLE(Linq4j.class, "singletonEnumerable", Object.class),
@@ -226,12 +257,18 @@ public enum BuiltInMethod {
   AS_ENUMERABLE2(Linq4j.class, "asEnumerable", Iterable.class),
   ENUMERABLE_TO_LIST(ExtendedEnumerable.class, "toList"),
   AS_LIST(Primitive.class, "asList", Object.class),
+  MEMORY_GET0(MemoryFactory.Memory.class, "get"),
+  MEMORY_GET1(MemoryFactory.Memory.class, "get", int.class),
   ENUMERATOR_CURRENT(Enumerator.class, "current"),
   ENUMERATOR_MOVE_NEXT(Enumerator.class, "moveNext"),
   ENUMERATOR_CLOSE(Enumerator.class, "close"),
   ENUMERATOR_RESET(Enumerator.class, "reset"),
   ENUMERABLE_ENUMERATOR(Enumerable.class, "enumerator"),
   ENUMERABLE_FOREACH(Enumerable.class, "foreach", Function1.class),
+  ITERABLE_FOR_EACH(Iterable.class, "forEach", Consumer.class),
+  PREDICATE_TEST(Predicate.class, "test", Object.class),
+  BI_PREDICATE_TEST(BiPredicate.class, "test", Object.class, Object.class),
+  CONSUMER_ACCEPT(Consumer.class, "accept", Object.class),
   TYPED_GET_ELEMENT_TYPE(ArrayBindable.class, "getElementType"),
   BINDABLE_BIND(Bindable.class, "bind", DataContext.class),
   RESULT_SET_GET_DATE2(ResultSet.class, "getDate", int.class, Calendar.class),
@@ -283,6 +320,9 @@ public enum BuiltInMethod {
   RIGHT(SqlFunctions.class, "right", String.class, int.class),
   TO_BASE64(SqlFunctions.class, "toBase64", String.class),
   FROM_BASE64(SqlFunctions.class, "fromBase64", String.class),
+  MD5(SqlFunctions.class, "md5", String.class),
+  SHA1(SqlFunctions.class, "sha1", String.class),
+  EXTRACT_VALUE(XmlFunctions.class, "extractValue", String.class, String.class),
   JSONIZE(JsonFunctions.class, "jsonize", Object.class),
   DEJSONIZE(JsonFunctions.class, "dejsonize", String.class),
   JSON_VALUE_EXPRESSION(JsonFunctions.class, "jsonValueExpression",
@@ -352,6 +392,14 @@ public enum BuiltInMethod {
   LIKE(SqlFunctions.class, "like", String.class, String.class),
   SIMILAR(SqlFunctions.class, "similar", String.class, String.class),
   POSIX_REGEX(SqlFunctions.class, "posixRegex", String.class, String.class, Boolean.class),
+  REGEXP_REPLACE3(SqlFunctions.class, "regexpReplace", String.class,
+      String.class, String.class),
+  REGEXP_REPLACE4(SqlFunctions.class, "regexpReplace", String.class,
+      String.class, String.class, int.class),
+  REGEXP_REPLACE5(SqlFunctions.class, "regexpReplace", String.class,
+      String.class, String.class, int.class, int.class),
+  REGEXP_REPLACE6(SqlFunctions.class, "regexpReplace", String.class,
+      String.class, String.class, int.class, int.class, String.class),
   IS_TRUE(SqlFunctions.class, "isTrue", Boolean.class),
   IS_NOT_FALSE(SqlFunctions.class, "isNotFalse", Boolean.class),
   NOT(SqlFunctions.class, "not", Boolean.class),
@@ -576,5 +624,3 @@ public enum BuiltInMethod {
     return method.getName();
   }
 }
-
-// End BuiltInMethod.java

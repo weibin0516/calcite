@@ -507,10 +507,12 @@ public abstract class SqlOperator {
     final List<RelDataType> argTypes = constructArgTypeList(validator, scope,
         call, args, false);
 
+    // Always disable type coercion for builtin operator operands,
+    // they are handled by the TypeCoercion specifically.
     final SqlOperator sqlOperator =
         SqlUtil.lookupRoutine(validator.getOperatorTable(), getNameAsId(),
             argTypes, null, null, getSyntax(), getKind(),
-            validator.getCatalogReader().nameMatcher());
+            validator.getCatalogReader().nameMatcher(), false);
 
     ((SqlBasicCall) call).setOperator(sqlOperator);
     RelDataType type = call.getOperator().validateOperands(validator, scope, call);
@@ -906,7 +908,7 @@ public abstract class SqlOperator {
   }
 
   /**
-   * @return true iff a call to this operator is guaranteed to always return
+   * Returns whether a call to this operator is guaranteed to always return
    * the same result given the same operands; true is assumed by default
    */
   public boolean isDeterministic() {
@@ -914,7 +916,7 @@ public abstract class SqlOperator {
   }
 
   /**
-   * @return true iff it is unsafe to cache query plans referencing this
+   * Returns whether it is unsafe to cache query plans referencing this
    * operator; false is assumed by default
    */
   public boolean isDynamicFunction() {
@@ -944,5 +946,3 @@ public abstract class SqlOperator {
     return true;
   }
 }
-
-// End SqlOperator.java

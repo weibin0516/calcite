@@ -106,6 +106,10 @@ public class SqlMinMaxAggFunction extends SqlAggFunction {
     return minMaxKind;
   }
 
+  @Override public Optionality getDistinctOptionality() {
+    return Optionality.IGNORED;
+  }
+
   @SuppressWarnings("deprecation")
   public List<RelDataType> getParameterTypes(RelDataTypeFactory typeFactory) {
     switch (minMaxKind) {
@@ -139,5 +143,3 @@ public class SqlMinMaxAggFunction extends SqlAggFunction {
     return super.unwrap(clazz);
   }
 }
-
-// End SqlMinMaxAggFunction.java

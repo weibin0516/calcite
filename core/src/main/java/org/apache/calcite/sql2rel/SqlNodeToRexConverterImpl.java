@@ -92,9 +92,7 @@ public class SqlNodeToRexConverterImpl implements SqlNodeToRexConverter {
       } else {
         type = validator.getValidatedNodeType(literal);
       }
-      return rexBuilder.makeCast(
-          type,
-          rexBuilder.constantNull());
+      return rexBuilder.makeNullLiteral(type);
     }
 
     BitString bitString;
@@ -164,5 +162,3 @@ public class SqlNodeToRexConverterImpl implements SqlNodeToRexConverter {
     }
   }
 }
-
-// End SqlNodeToRexConverterImpl.java

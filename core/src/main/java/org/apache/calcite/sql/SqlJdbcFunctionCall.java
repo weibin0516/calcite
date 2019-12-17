@@ -50,7 +50,7 @@ import static org.apache.calcite.util.Static.RESOURCE;
  * <tr>
  * <td colspan="2"><br>
  *
- * <h3>NUMERIC FUNCTIONS</h3>
+ * <h2>NUMERIC FUNCTIONS</h2>
  * </td>
  * </tr>
  * <tr>
@@ -107,7 +107,7 @@ import static org.apache.calcite.util.Static.RESOURCE;
  * </tr>
  * <tr>
  * <td>MOD(integer1, integer2)</td>
- * <td>Rh3ainder for integer1 / integer2</td>
+ * <td>Remainder for integer1 / integer2</td>
  * </tr>
  * <tr>
  * <td>PI()</td>
@@ -153,7 +153,7 @@ import static org.apache.calcite.util.Static.RESOURCE;
  * <tr>
  * <td colspan="2"><br>
  *
- * <h3>STRING FUNCTIONS</h3>
+ * <h2>STRING FUNCTIONS</h2>
  * </td>
  * </tr>
  * <tr>
@@ -202,7 +202,7 @@ import static org.apache.calcite.util.Static.RESOURCE;
  * </tr>
  * <tr>
  * <td>LTRIM(string)</td>
- * <td>Characters of string with leading blank spaces rh3oved</td>
+ * <td>Characters of string with leading blank spaces removed</td>
  * </tr>
  * <tr>
  * <td>REPEAT(string, count)</td>
@@ -246,7 +246,7 @@ import static org.apache.calcite.util.Static.RESOURCE;
  * <tr>
  * <td colspan="2"><br>
  *
- * <h3>TIME and DATE FUNCTIONS</h3>
+ * <h2>TIME and DATE FUNCTIONS</h2>
  * </td>
  * </tr>
  * <tr>
@@ -331,7 +331,7 @@ import static org.apache.calcite.util.Static.RESOURCE;
  * <tr>
  * <td colspan="2"><br>
  *
- * <h3>SYSTEM FUNCTIONS</h3>
+ * <h2>SYSTEM FUNCTIONS</h2>
  * </td>
  * </tr>
  * <tr>
@@ -349,7 +349,7 @@ import static org.apache.calcite.util.Static.RESOURCE;
  * <tr>
  * <td colspan="2"><br>
  *
- * <h3>CONVERSION FUNCTIONS</h3>
+ * <h2>CONVERSION FUNCTIONS</h2>
  * </td>
  * </tr>
  * <tr>
@@ -382,9 +382,9 @@ public class SqlJdbcFunctionCall extends SqlFunction {
 
   /** List of all time/date function names defined by JDBC. */
   private static final String TIME_DATE_FUNCTIONS = constructFuncList(
-      "CURDATE", "CURTIME", "DAYNAME", "DAYOFMONTH", "DAYOFWEEK",
+      "CONVERT_TIMEZONE", "CURDATE", "CURTIME", "DAYNAME", "DAYOFMONTH", "DAYOFWEEK",
       "DAYOFYEAR", "HOUR", "MINUTE", "MONTH", "MONTHNAME", "NOW",
-      "QUARTER", "SECOND", "TIMESTAMPADD", "TIMESTAMPDIFF",
+      "QUARTER", "SECOND", "TIMESTAMPADD", "TIMESTAMPDIFF", "TO_DATE", "TO_TIMESTAMP",
       "WEEK", "YEAR");
 
   /** List of all system function names defined by JDBC. */
@@ -729,11 +729,14 @@ public class SqlJdbcFunctionCall extends SqlFunction {
       map.put("MONTHNAME", simple(SqlLibraryOperators.MONTHNAME));
       map.put("SECOND", simple(SqlStdOperatorTable.SECOND));
 
+      map.put("CONVERT_TIMEZONE", simple(SqlLibraryOperators.CONVERT_TIMEZONE));
       map.put("CURDATE", simple(SqlStdOperatorTable.CURRENT_DATE));
       map.put("CURTIME", simple(SqlStdOperatorTable.LOCALTIME));
       map.put("NOW", simple(SqlStdOperatorTable.CURRENT_TIMESTAMP));
       map.put("TIMESTAMPADD", simple(SqlStdOperatorTable.TIMESTAMP_ADD));
       map.put("TIMESTAMPDIFF", simple(SqlStdOperatorTable.TIMESTAMP_DIFF));
+      map.put("TO_DATE", simple(SqlLibraryOperators.TO_DATE));
+      map.put("TO_TIMESTAMP", simple(SqlLibraryOperators.TO_TIMESTAMP));
 
       map.put("DATABASE", simple(SqlStdOperatorTable.CURRENT_CATALOG));
       map.put("IFNULL",
@@ -787,5 +790,3 @@ public class SqlJdbcFunctionCall extends SqlFunction {
     }
   }
 }
-
-// End SqlJdbcFunctionCall.java

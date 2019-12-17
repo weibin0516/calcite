@@ -48,6 +48,7 @@ import org.apache.calcite.rel.rules.JoinAssociateRule;
 import org.apache.calcite.rel.rules.JoinCommuteRule;
 import org.apache.calcite.rel.rules.JoinPushExpressionsRule;
 import org.apache.calcite.rel.rules.JoinPushThroughJoinRule;
+import org.apache.calcite.rel.rules.MatchRule;
 import org.apache.calcite.rel.rules.MaterializedViewFilterScanRule;
 import org.apache.calcite.rel.rules.ProjectCalcMergeRule;
 import org.apache.calcite.rel.rules.ProjectFilterTransposeRule;
@@ -126,6 +127,7 @@ public class RelOptRules {
       AggregateReduceFunctionsRule.INSTANCE,
       FilterAggregateTransposeRule.INSTANCE,
       ProjectWindowTransposeRule.INSTANCE,
+      MatchRule.INSTANCE,
       JoinCommuteRule.INSTANCE,
       JoinPushThroughJoinRule.RIGHT,
       JoinPushThroughJoinRule.LEFT,
@@ -184,7 +186,7 @@ public class RelOptRules {
       ValuesReduceRule.PROJECT_INSTANCE,
       AggregateValuesRule.INSTANCE);
 
-  static final List<RelOptRule> MATERIALIZATION_RULES = ImmutableList.of(
+  public static final List<RelOptRule> MATERIALIZATION_RULES = ImmutableList.of(
       MaterializedViewFilterScanRule.INSTANCE,
       AbstractMaterializedViewRule.INSTANCE_PROJECT_FILTER,
       AbstractMaterializedViewRule.INSTANCE_FILTER,
@@ -193,5 +195,3 @@ public class RelOptRules {
       AbstractMaterializedViewRule.INSTANCE_PROJECT_AGGREGATE,
       AbstractMaterializedViewRule.INSTANCE_AGGREGATE);
 }
-
-// End RelOptRules.java

@@ -18,6 +18,7 @@ package org.apache.calcite.sql.fun;
 
 import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeFactory;
+import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlCallBinding;
 import org.apache.calcite.sql.SqlKind;
@@ -48,7 +49,7 @@ class SqlItemOperator extends SqlSpecialOperator {
           OperandTypes.family(SqlTypeFamily.ANY));
 
   SqlItemOperator() {
-    super("ITEM", SqlKind.OTHER_FUNCTION, 100, true, null, null, null);
+    super("ITEM", SqlKind.ITEM, 100, true, null, null, null);
   }
 
   @Override public ReduceResult reduceExpr(int ordinal,
@@ -100,6 +101,8 @@ class SqlItemOperator extends SqlSpecialOperator {
     case MAP:
       return OperandTypes.family(
           operandType.getKeyType().getSqlTypeName().getFamily());
+    case ROW:
+      return OperandTypes.CHARACTER;
     case ANY:
     case DYNAMIC_STAR:
       return OperandTypes.or(
@@ -125,6 +128,15 @@ class SqlItemOperator extends SqlSpecialOperator {
     case MAP:
       return typeFactory.createTypeWithNullability(operandType.getValueType(),
           true);
+    case ROW:
+      String fieldName = opBinding.getOperandLiteralValue(1, String.class);
+      RelDataTypeField field = operandType.getField(fieldName, false, false);
+      if (field == null) {
+        throw new AssertionError("Cannot infer type of field '"
+            + fieldName + "' within ROW type: " + operandType);
+      } else {
+        return field.getType();
+      }
     case ANY:
     case DYNAMIC_STAR:
       return typeFactory.createTypeWithNullability(
@@ -134,5 +146,3 @@ class SqlItemOperator extends SqlSpecialOperator {
     }
   }
 }
-
-// End SqlItemOperator.java

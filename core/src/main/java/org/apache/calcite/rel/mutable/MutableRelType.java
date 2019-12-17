@@ -26,6 +26,7 @@ enum MutableRelType {
   FILTER,
   INTERSECT,
   JOIN,
+  MATCH,
   MINUS,
   PROJECT,
   SAMPLE,
@@ -39,5 +40,3 @@ enum MutableRelType {
   WINDOW,
   HOLDER
 }
-
-// End MutableRelType.java

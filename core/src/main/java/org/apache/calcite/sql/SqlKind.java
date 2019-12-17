@@ -92,6 +92,16 @@ public enum SqlKind {
   SELECT,
 
   /**
+   * Sql Hint statement.
+   */
+  HINT,
+
+  /**
+   * Table reference.
+   */
+  TABLE_REF,
+
+  /**
    * JOIN operator or compound FROM clause.
    *
    * <p>A FROM clause with more than one table is represented as if it were a
@@ -176,6 +186,9 @@ public enum SqlKind {
 
   /** Item in WITH clause. */
   WITH_ITEM,
+
+  /** Item expression */
+  ITEM,
 
   /**
    * Union
@@ -698,7 +711,8 @@ public enum SqlKind {
   COLUMN_LIST,
 
   /**
-   * The "CAST" operator.
+   * The "CAST" operator, and also the PostgreSQL-style infix cast operator
+   * "::".
    */
   CAST,
 
@@ -1166,6 +1180,7 @@ public enum SqlKind {
       EnumSet.of(COMMIT, ROLLBACK, ALTER_SESSION,
           CREATE_SCHEMA, CREATE_FOREIGN_SCHEMA, DROP_SCHEMA,
           CREATE_TABLE, ALTER_TABLE, DROP_TABLE,
+          CREATE_FUNCTION, DROP_FUNCTION,
           CREATE_VIEW, ALTER_VIEW, DROP_VIEW,
           CREATE_MATERIALIZED_VIEW, ALTER_MATERIALIZED_VIEW,
           DROP_MATERIALIZED_VIEW,
@@ -1223,7 +1238,7 @@ public enum SqlKind {
                   TIMESTAMP_ADD, TIMESTAMP_DIFF, EXTRACT,
                   LITERAL_CHAIN, JDBC_FN, PRECEDING, FOLLOWING, ORDER_BY,
                   NULLS_FIRST, NULLS_LAST, COLLECTION_TABLE, TABLESAMPLE,
-                  VALUES, WITH, WITH_ITEM, SKIP_TO_FIRST, SKIP_TO_LAST,
+                  VALUES, WITH, WITH_ITEM, ITEM, SKIP_TO_FIRST, SKIP_TO_LAST,
                   JSON_VALUE_EXPRESSION),
               AGGREGATE, DML, DDL));
 
@@ -1278,6 +1293,49 @@ public enum SqlKind {
           IN, EQUALS, NOT_EQUALS,
           LESS_THAN, GREATER_THAN,
           GREATER_THAN_OR_EQUAL, LESS_THAN_OR_EQUAL);
+
+  /**
+   * Category of binary arithmetic.
+   *
+   * <p>Consists of:
+   * {@link #PLUS}
+   * {@link #MINUS}
+   * {@link #TIMES}
+   * {@link #DIVIDE}
+   * {@link #MOD}.
+   */
+  public static final Set<SqlKind> BINARY_ARITHMETIC =
+      EnumSet.of(PLUS, MINUS, TIMES, DIVIDE, MOD);
+
+  /**
+   * Category of binary equality.
+   *
+   * <p>Consists of:
+   * {@link #EQUALS}
+   * {@link #NOT_EQUALS}
+   */
+  public static final Set<SqlKind> BINARY_EQUALITY =
+      EnumSet.of(EQUALS, NOT_EQUALS);
+
+  /**
+   * Category of binary comparison.
+   *
+   * <p>Consists of:
+   * {@link #EQUALS}
+   * {@link #NOT_EQUALS}
+   * {@link #GREATER_THAN}
+   * {@link #GREATER_THAN_OR_EQUAL}
+   * {@link #LESS_THAN}
+   * {@link #LESS_THAN_OR_EQUAL}
+   * {@link #IS_DISTINCT_FROM}
+   * {@link #IS_NOT_DISTINCT_FROM}
+   */
+  public static final Set<SqlKind> BINARY_COMPARISON =
+      EnumSet.of(
+          EQUALS, NOT_EQUALS,
+          GREATER_THAN, GREATER_THAN_OR_EQUAL,
+          LESS_THAN, LESS_THAN_OR_EQUAL,
+          IS_DISTINCT_FROM, IS_NOT_DISTINCT_FROM);
 
   /** Lower-case name. */
   public final String lowerName = name().toLowerCase(Locale.ROOT);
@@ -1418,5 +1476,3 @@ public enum SqlKind {
     return set;
   }
 }
-
-// End SqlKind.java

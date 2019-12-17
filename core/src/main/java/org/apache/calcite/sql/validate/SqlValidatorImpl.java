@@ -29,7 +29,6 @@ import org.apache.calcite.rel.type.RelDataTypeFactory;
 import org.apache.calcite.rel.type.RelDataTypeField;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.rel.type.RelRecordType;
-import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexPatternFieldRef;
 import org.apache.calcite.rex.RexVisitor;
@@ -85,12 +84,14 @@ import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.type.AssignableOperandTypeChecker;
 import org.apache.calcite.sql.type.ReturnTypes;
 import org.apache.calcite.sql.type.SqlOperandTypeInference;
+import org.apache.calcite.sql.type.SqlTypeCoercionRule;
 import org.apache.calcite.sql.type.SqlTypeName;
 import org.apache.calcite.sql.type.SqlTypeUtil;
 import org.apache.calcite.sql.util.SqlBasicVisitor;
 import org.apache.calcite.sql.util.SqlShuttle;
 import org.apache.calcite.sql.util.SqlVisitor;
-import org.apache.calcite.sql2rel.InitializerContext;
+import org.apache.calcite.sql.validate.implicit.TypeCoercion;
+import org.apache.calcite.sql.validate.implicit.TypeCoercions;
 import org.apache.calcite.util.BitString;
 import org.apache.calcite.util.Bug;
 import org.apache.calcite.util.ImmutableBitSet;
@@ -131,6 +132,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
 
@@ -272,6 +274,8 @@ public class SqlValidatorImpl implements SqlValidatorWithHints {
 
   protected boolean expandColumnReferences;
 
+  protected boolean lenientOperatorLookup;
+
   private boolean rewriteCalls;
 
   private NullCollation nullCollation = NullCollation.HIGH;
@@ -284,6 +288,12 @@ public class SqlValidatorImpl implements SqlValidatorWithHints {
 
   private final SqlValidatorImpl.ValidationErrorFunction validationErrorFunction =
       new SqlValidatorImpl.ValidationErrorFunction();
+
+  // TypeCoercion instance used for implicit type coercion.
+  private TypeCoercion typeCoercion;
+
+  // Flag saying if we enable the implicit type coercion.
+  private boolean enableTypeCoercion;
 
   //~ Constructors -----------------------------------------------------------
 
@@ -319,6 +329,11 @@ public class SqlValidatorImpl implements SqlValidatorWithHints {
     groupFinder = new AggFinder(opTab, false, false, true, null, nameMatcher);
     aggOrOverOrGroupFinder = new AggFinder(opTab, true, true, true, null,
         nameMatcher);
+    this.lenientOperatorLookup = catalogReader.getConfig() != null
+        && catalogReader.getConfig().lenientOperatorLookup();
+    this.enableTypeCoercion = catalogReader.getConfig() == null
+        || catalogReader.getConfig().typeCoercion();
+    this.typeCoercion = TypeCoercions.getTypeCoercion(this, conformance);
   }
 
   //~ Methods ----------------------------------------------------------------
@@ -1063,13 +1078,19 @@ public class SqlValidatorImpl implements SqlValidatorWithHints {
       // Handle extended identifiers.
       final SqlCall call = (SqlCall) node;
       switch (call.getOperator().getKind()) {
+      case TABLE_REF:
+        return getNamespace(call.operand(0), scope);
       case EXTEND:
-        final SqlIdentifier id = (SqlIdentifier) call.getOperandList().get(0);
+        final SqlNode operand0 = call.getOperandList().get(0);
+        final SqlIdentifier identifier = operand0.getKind() == SqlKind.TABLE_REF
+            ? ((SqlCall) operand0).operand(0)
+            : (SqlIdentifier) operand0;
         final DelegatingScope idScope = (DelegatingScope) scope;
-        return getNamespace(id, idScope);
+        return getNamespace(identifier, idScope);
       case AS:
         final SqlNode nested = call.getOperandList().get(0);
         switch (nested.getKind()) {
+        case TABLE_REF:
         case EXTEND:
           return getNamespace(nested, scope);
         }
@@ -1102,6 +1123,7 @@ public class SqlValidatorImpl implements SqlValidatorWithHints {
         return ns;
       }
       // fall through
+    case TABLE_REF:
     case SNAPSHOT:
     case OVER:
     case COLLECTION_TABLE:
@@ -1217,7 +1239,7 @@ public class SqlValidatorImpl implements SqlValidatorWithHints {
             new SqlNodeList(SqlParserPos.ZERO);
         selectList.add(SqlIdentifier.star(SqlParserPos.ZERO));
         return new SqlSelect(node.getParserPosition(), null, selectList, node,
-            null, null, null, null, null, null, null);
+            null, null, null, null, null, null, null, null);
       }
 
     case ORDER_BY: {
@@ -1274,7 +1296,7 @@ public class SqlValidatorImpl implements SqlValidatorWithHints {
       }
       return new SqlSelect(SqlParserPos.ZERO, null, selectList, orderBy.query,
           null, null, null, null, orderList, orderBy.offset,
-          orderBy.fetch);
+          orderBy.fetch, null);
     }
 
     case EXPLICIT_TABLE: {
@@ -1283,7 +1305,7 @@ public class SqlValidatorImpl implements SqlValidatorWithHints {
       final SqlNodeList selectList = new SqlNodeList(SqlParserPos.ZERO);
       selectList.add(SqlIdentifier.star(SqlParserPos.ZERO));
       return new SqlSelect(SqlParserPos.ZERO, null, selectList, call.operand(0),
-          null, null, null, null, null, null, null);
+          null, null, null, null, null, null, null, null);
     }
 
     case DELETE: {
@@ -1377,7 +1399,7 @@ public class SqlValidatorImpl implements SqlValidatorWithHints {
             call.getCondition());
     SqlSelect select =
         new SqlSelect(SqlParserPos.ZERO, null, selectList, outerJoin, null,
-            null, null, null, null, null, null);
+            null, null, null, null, null, null, null);
     call.setSourceSelect(select);
 
     // Source for the insert call is a select of the source table
@@ -1395,7 +1417,7 @@ public class SqlValidatorImpl implements SqlValidatorWithHints {
       final SqlNode insertSource = SqlNode.clone(sourceTableRef);
       select =
           new SqlSelect(SqlParserPos.ZERO, null, selectList, insertSource, null,
-              null, null, null, null, null, null);
+              null, null, null, null, null, null, null);
       insertCall.setSource(select);
     }
   }
@@ -1460,7 +1482,7 @@ public class SqlValidatorImpl implements SqlValidatorWithHints {
     }
     source =
         new SqlSelect(SqlParserPos.ZERO, null, selectList, source, null, null,
-            null, null, null, null, null);
+            null, null, null, null, null, null);
     source = SqlValidatorUtil.addAlias(source, UPDATE_SRC_ALIAS);
     SqlMerge mergeCall =
         new SqlMerge(updateCall.getParserPosition(), target, condition, source,
@@ -1515,7 +1537,7 @@ public class SqlValidatorImpl implements SqlValidatorWithHints {
               call.getAlias().getSimple());
     }
     return new SqlSelect(SqlParserPos.ZERO, null, selectList, sourceTable,
-        call.getCondition(), null, null, null, null, null, null);
+        call.getCondition(), null, null, null, null, null, null, null);
   }
 
   /**
@@ -1536,7 +1558,7 @@ public class SqlValidatorImpl implements SqlValidatorWithHints {
               call.getAlias().getSimple());
     }
     return new SqlSelect(SqlParserPos.ZERO, null, selectList, sourceTable,
-        call.getCondition(), null, null, null, null, null, null);
+        call.getCondition(), null, null, null, null, null, null, null);
   }
 
   /**
@@ -1776,7 +1798,13 @@ public class SqlValidatorImpl implements SqlValidatorWithHints {
     if ((node instanceof SqlDynamicParam) || isNullLiteral) {
       if (inferredType.equals(unknownType)) {
         if (isNullLiteral) {
-          throw newValidationError(node, RESOURCE.nullIllegal());
+          if (enableTypeCoercion) {
+            // derive type of null literal
+            deriveType(scope, node);
+            return;
+          } else {
+            throw newValidationError(node, RESOURCE.nullIllegal());
+          }
         } else {
           throw newValidationError(node, RESOURCE.dynamicParamIllegal());
         }
@@ -1872,7 +1900,7 @@ public class SqlValidatorImpl implements SqlValidatorWithHints {
       Set<String> aliases,
       List<Map.Entry<String, RelDataType>> fieldList,
       SqlNode exp,
-      SqlValidatorScope scope,
+      SelectScope scope,
       final boolean includeSystemVars) {
     String alias = SqlValidatorUtil.getAlias(exp, -1);
     String uniqueAlias =
@@ -2297,6 +2325,22 @@ public class SqlValidatorImpl implements SqlValidatorWithHints {
             child.namespace, forceNullable);
       }
 
+      return newNode;
+
+    case TABLE_REF:
+      call = (SqlCall) node;
+      registerFrom(parentScope,
+          usingScope,
+          register,
+          call.operand(0),
+          enclosingNode,
+          alias,
+          extendList,
+          forceNullable,
+          lateral);
+      if (extendList != null && extendList.size() != 0) {
+        return enclosingNode;
+      }
       return newNode;
 
     case EXTEND:
@@ -3088,6 +3132,7 @@ public class SqlValidatorImpl implements SqlValidatorWithHints {
     Objects.requireNonNull(targetRowType);
     switch (node.getKind()) {
     case AS:
+    case TABLE_REF:
       validateFrom(
           ((SqlCall) node).operand(0),
           targetRowType,
@@ -3816,6 +3861,38 @@ public class SqlValidatorImpl implements SqlValidatorWithHints {
     return scopes.get(withItem);
   }
 
+  public SqlValidator setLenientOperatorLookup(boolean lenient) {
+    this.lenientOperatorLookup = lenient;
+    return this;
+  }
+
+  public boolean isLenientOperatorLookup() {
+    return this.lenientOperatorLookup;
+  }
+
+  public SqlValidator setEnableTypeCoercion(boolean enabled) {
+    this.enableTypeCoercion = enabled;
+    return this;
+  }
+
+  public boolean isTypeCoercionEnabled() {
+    return this.enableTypeCoercion;
+  }
+
+  public void setTypeCoercion(TypeCoercion typeCoercion) {
+    Objects.requireNonNull(typeCoercion);
+    this.typeCoercion = typeCoercion;
+  }
+
+  public TypeCoercion getTypeCoercion() {
+    assert isTypeCoercionEnabled();
+    return this.typeCoercion;
+  }
+
+  public void setSqlTypeCoercionRules(SqlTypeCoercionRule typeCoercionRules) {
+    SqlTypeCoercionRule.THREAD_PROVIDERS.set(typeCoercionRules);
+  }
+
   /**
    * Validates the ORDER BY clause of a SELECT statement.
    *
@@ -4164,8 +4241,8 @@ public class SqlValidatorImpl implements SqlValidatorWithHints {
     final RelDataType type = deriveType(scope, selectItem);
     setValidatedNodeType(selectItem, type);
 
-    // we do not want to pass on the RelRecordType returned
-    // by the sub query.  Just the type of the single expression
+    // We do not want to pass on the RelRecordType returned
+    // by the sub-query.  Just the type of the single expression
     // in the sub-query select list.
     assert type instanceof RelRecordType;
     RelRecordType rec = (RelRecordType) type;
@@ -4261,14 +4338,34 @@ public class SqlValidatorImpl implements SqlValidatorWithHints {
     final RelDataType logicalSourceRowType =
         getLogicalSourceRowType(sourceRowType, insert);
 
-    checkFieldCount(insert.getTargetTable(), table, source,
-        logicalSourceRowType, logicalTargetRowType);
+    final List<ColumnStrategy> strategies =
+        table.unwrap(RelOptTable.class).getColumnStrategies();
 
-    checkTypeAssignment(logicalSourceRowType, logicalTargetRowType, insert);
+    final RelDataType realTargetRowType = typeFactory.createStructType(
+        logicalTargetRowType.getFieldList()
+            .stream().filter(f -> strategies.get(f.getIndex()).canInsertInto())
+            .collect(Collectors.toList()));
+
+    final RelDataType targetRowTypeToValidate =
+        logicalSourceRowType.getFieldCount() == logicalTargetRowType.getFieldCount()
+        ? logicalTargetRowType
+        : realTargetRowType;
+
+    checkFieldCount(insert.getTargetTable(), table, strategies,
+        targetRowTypeToValidate, realTargetRowType,
+        source, logicalSourceRowType, logicalTargetRowType);
+
+    // Skip the virtual columns(can not insert into) type assignment
+    // check if the source fields num is equals with
+    // the real target table fields num, see how #checkFieldCount was used.
+    checkTypeAssignment(logicalSourceRowType, targetRowTypeToValidate, insert);
 
     checkConstraint(table, source, logicalTargetRowType);
 
     validateAccess(insert.getTargetTable(), table, SqlAccessEnum.INSERT);
+
+    // Refresh the insert row type to keep sync with source.
+    setValidatedNodeType(insert, targetRowTypeToValidate);
   }
 
   /**
@@ -4367,31 +4464,39 @@ public class SqlValidatorImpl implements SqlValidatorWithHints {
     }
   }
 
+  /**
+   * Check the field count of sql insert source and target node row type.
+   *
+   * @param node                    target table sql identifier
+   * @param table                   target table
+   * @param strategies              column strategies of target table
+   * @param targetRowTypeToValidate row type to validate mainly for column strategies
+   * @param realTargetRowType       target table row type exclusive virtual columns
+   * @param source                  source node
+   * @param logicalSourceRowType    source node row type
+   * @param logicalTargetRowType    logical target row type, contains only target columns if
+   *                                they are specified or if the sql dialect allows subset insert,
+   *                                make a subset of fields(start from the left first field) whose
+   *                                length is equals with the source row type fields number
+   */
   private void checkFieldCount(SqlNode node, SqlValidatorTable table,
-      SqlNode source, RelDataType logicalSourceRowType,
-      RelDataType logicalTargetRowType) {
+      List<ColumnStrategy> strategies, RelDataType targetRowTypeToValidate,
+      RelDataType realTargetRowType, SqlNode source,
+      RelDataType logicalSourceRowType, RelDataType logicalTargetRowType) {
     final int sourceFieldCount = logicalSourceRowType.getFieldCount();
     final int targetFieldCount = logicalTargetRowType.getFieldCount();
-    if (sourceFieldCount != targetFieldCount) {
+    final int targetRealFieldCount = realTargetRowType.getFieldCount();
+    if (sourceFieldCount != targetFieldCount
+        && sourceFieldCount != targetRealFieldCount) {
+      // we allow the source row fields equals with either the target row fields num,
+      // or the number of real(exclusive columns that can not insert into) target row fields.
       throw newValidationError(node,
           RESOURCE.unmatchInsertColumn(targetFieldCount, sourceFieldCount));
     }
     // Ensure that non-nullable fields are targeted.
-    final InitializerContext rexBuilder =
-        new InitializerContext() {
-          public RexBuilder getRexBuilder() {
-            return new RexBuilder(typeFactory);
-          }
-
-          public RexNode convertExpression(SqlNode e) {
-            throw new UnsupportedOperationException();
-          }
-        };
-    final List<ColumnStrategy> strategies =
-        table.unwrap(RelOptTable.class).getColumnStrategies();
     for (final RelDataTypeField field : table.getRowType().getFieldList()) {
       final RelDataTypeField targetField =
-          logicalTargetRowType.getField(field.getName(), true, false);
+          targetRowTypeToValidate.getField(field.getName(), true, false);
       switch (strategies.get(field.getIndex())) {
       case NOT_NULLABLE:
         assert !field.getType().isNullable();
@@ -6403,5 +6508,3 @@ public class SqlValidatorImpl implements SqlValidatorWithHints {
   }
 
 }
-
-// End SqlValidatorImpl.java

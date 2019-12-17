@@ -28,13 +28,13 @@ import org.apache.calcite.rel.RelCollations;
 import org.apache.calcite.rel.RelHomogeneousShuttle;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.RelShuttle;
+import org.apache.calcite.rel.RelShuttleImpl;
 import org.apache.calcite.rel.RelVisitor;
 import org.apache.calcite.rel.RelWriter;
 import org.apache.calcite.rel.core.Aggregate;
 import org.apache.calcite.rel.core.AggregateCall;
 import org.apache.calcite.rel.core.Calc;
 import org.apache.calcite.rel.core.CorrelationId;
-import org.apache.calcite.rel.core.EquiJoin;
 import org.apache.calcite.rel.core.Filter;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinRelType;
@@ -45,6 +45,9 @@ import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rel.externalize.RelJsonWriter;
 import org.apache.calcite.rel.externalize.RelWriterImpl;
 import org.apache.calcite.rel.externalize.RelXmlWriter;
+import org.apache.calcite.rel.hint.HintStrategyTable;
+import org.apache.calcite.rel.hint.Hintable;
+import org.apache.calcite.rel.hint.RelHint;
 import org.apache.calcite.rel.logical.LogicalAggregate;
 import org.apache.calcite.rel.logical.LogicalCalc;
 import org.apache.calcite.rel.logical.LogicalFilter;
@@ -113,11 +116,15 @@ import com.google.common.collect.Multimap;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.AbstractList;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.Collection;
+import java.util.Comparator;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -126,6 +133,7 @@ import java.util.Set;
 import java.util.SortedSet;
 import java.util.TreeSet;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import javax.annotation.Nonnull;
 
 /**
@@ -385,6 +393,53 @@ public abstract class RelOptUtil {
   }
 
   /**
+   * Copy the {@link org.apache.calcite.rel.hint.RelHint}s from {@code originalRel}
+   * to {@code newRel} if both of them are {@link Hintable}.
+   *
+   * <p>The hints are also filtered by the specified hint strategies.
+   *
+   * @param originalRel Original relational expression
+   * @param newRel      New relational expression
+   * @return A copy of {@code newRel} with hints of {@code originalRel}, or {@code newRel}
+   * directly if one of them are not {@link Hintable}
+   */
+  public static RelNode copyRelHints(RelNode originalRel, RelNode newRel) {
+    if (originalRel instanceof Hintable
+        && newRel instanceof Hintable
+        && ((Hintable) originalRel).getHints().size() > 0) {
+      HintStrategyTable hintStrategies = originalRel.getCluster().getHintStrategies();
+      final List<RelHint> hints = ((Hintable) originalRel).getHints();
+      // Keep all the hints of project node for 2 reasons:
+      // 1. Keep sync with the hints propagation logic,
+      // see RelHintPropagateShuttle for details.
+      // 2. We may re-propagate these hints when decorrelating a query.
+      if (originalRel instanceof Project
+          && newRel instanceof Project) {
+        return ((Hintable) newRel).attachHints(hints);
+      } else {
+        return ((Hintable) newRel)
+            .attachHints(hintStrategies.apply(hints, newRel));
+      }
+    }
+    return newRel;
+  }
+
+  /**
+   * Propagates the relational expression hints from root node to leaf node.
+   *
+   * @param rel   The relational expression
+   * @param reset Flag saying if to reset the existing hints before the propagation
+   * @return New relational expression with hints propagated
+   */
+  public static RelNode propagateRelHints(RelNode rel, boolean reset) {
+    if (reset) {
+      rel = rel.accept(new ResetHintsShuttle());
+    }
+    final RelShuttle shuttle = new RelHintPropagateShuttle(rel.getCluster().getHintStrategies());
+    return rel.accept(shuttle);
+  }
+
+  /**
    * Returns a permutation describing where output fields come from. In
    * the returned map, value of {@code map.getTargetOpt(i)} is {@code n} if
    * field {@code i} projects input field {@code n} or applies a cast on
@@ -432,6 +487,29 @@ public abstract class RelOptUtil {
         mapping.set(
             node.i,
             ((RexInputRef) node.e).getIndex());
+      }
+    }
+    return mapping;
+  }
+
+  /**
+   * Returns a permutation describing where the Project's fields come from
+   * after the Project is pushed down.
+   */
+  public static Mappings.TargetMapping permutationPushDownProject(
+      List<RexNode> nodes,
+      RelDataType inputRowType,
+      int sourceOffset,
+      int targetOffset) {
+    final Mappings.TargetMapping mapping =
+        Mappings.create(MappingType.PARTIAL_FUNCTION,
+            inputRowType.getFieldCount() + sourceOffset,
+            nodes.size() + targetOffset);
+    for (Ord<RexNode> node : Ord.zip(nodes)) {
+      if (node.e instanceof RexInputRef) {
+        mapping.set(
+            ((RexInputRef) node.e).getIndex() + sourceOffset,
+            node.i + targetOffset);
       }
     }
     return mapping;
@@ -862,6 +940,24 @@ public abstract class RelOptUtil {
       List<Boolean> filterNulls) {
     final List<RexNode> nonEquiList = new ArrayList<>();
 
+    splitJoinCondition(left, right, condition, leftKeys, rightKeys,
+        filterNulls, nonEquiList);
+
+    return RexUtil.composeConjunction(
+        left.getCluster().getRexBuilder(), nonEquiList);
+  }
+
+  /** As
+   * {@link #splitJoinCondition(RelNode, RelNode, RexNode, List, List, List)},
+   * but writes non-equi conditions to a conjunctive list. */
+  public static void splitJoinCondition(
+      RelNode left,
+      RelNode right,
+      RexNode condition,
+      List<Integer> leftKeys,
+      List<Integer> rightKeys,
+      List<Boolean> filterNulls,
+      List<RexNode> nonEquiList) {
     splitJoinCondition(
         left.getCluster().getRexBuilder(),
         left.getRowType().getFieldCount(),
@@ -870,9 +966,6 @@ public abstract class RelOptUtil {
         rightKeys,
         filterNulls,
         nonEquiList);
-
-    return RexUtil.composeConjunction(
-        left.getCluster().getRexBuilder(), nonEquiList);
   }
 
   @Deprecated // to be removed before 2.0
@@ -1002,6 +1095,18 @@ public abstract class RelOptUtil {
 
   public static RexNode splitCorrelatedFilterCondition(
       LogicalFilter filter,
+      List<RexNode> joinKeys,
+      List<RexNode> correlatedJoinKeys,
+      boolean extractCorrelatedFieldAccess) {
+    return splitCorrelatedFilterCondition(
+        (Filter) filter,
+        joinKeys,
+        correlatedJoinKeys,
+        extractCorrelatedFieldAccess);
+  }
+
+  public static RexNode splitCorrelatedFilterCondition(
+      Filter filter,
       List<RexNode> joinKeys,
       List<RexNode> correlatedJoinKeys,
       boolean extractCorrelatedFieldAccess) {
@@ -1352,6 +1457,22 @@ public abstract class RelOptUtil {
 
   private static void splitCorrelatedFilterCondition(
       LogicalFilter filter,
+      RexNode condition,
+      List<RexNode> joinKeys,
+      List<RexNode> correlatedJoinKeys,
+      List<RexNode> nonEquiList,
+      boolean extractCorrelatedFieldAccess) {
+    splitCorrelatedFilterCondition(
+        (Filter) filter,
+        condition,
+        joinKeys,
+        correlatedJoinKeys,
+        nonEquiList,
+        extractCorrelatedFieldAccess);
+  }
+
+  private static void splitCorrelatedFilterCondition(
+      Filter filter,
       RexNode condition,
       List<RexNode> joinKeys,
       List<RexNode> correlatedJoinKeys,
@@ -1851,6 +1972,13 @@ public abstract class RelOptUtil {
       registerReductionRules(planner);
     }
 
+  }
+
+  public static StringBuilder appendRelDescription(
+      StringBuilder sb, RelNode rel) {
+    sb.append("rel#").append(rel.getId())
+        .append(':').append(rel.getDigest());
+    return sb;
   }
 
   /**
@@ -3433,28 +3561,53 @@ public abstract class RelOptUtil {
         : condition;
 
     switch (node.getKind()) {
-    case AND:
     case EQUALS:
     case IS_NOT_DISTINCT_FROM:
+      final RexCall call0 = (RexCall) node;
+      final RexNode leftRex = call0.getOperands().get(0);
+      final RexNode rightRex = call0.getOperands().get(1);
+      final ImmutableBitSet leftBits = RelOptUtil.InputFinder.bits(leftRex);
+      final ImmutableBitSet rightBits = RelOptUtil.InputFinder.bits(rightRex);
+      final int pivot = leftCount + extraLeftExprs.size();
+      Side lside = Side.of(leftBits, pivot);
+      Side rside = Side.of(rightBits, pivot);
+      if (!lside.opposite(rside)) {
+        return call0;
+      }
+      // fall through
+    case AND:
       final RexCall call = (RexCall) node;
       final List<RexNode> list = new ArrayList<>();
       List<RexNode> operands = Lists.newArrayList(call.getOperands());
       for (int i = 0; i < operands.size(); i++) {
         RexNode operand = operands.get(i);
-        final int left2 = leftCount + extraLeftExprs.size();
-        final RexNode e =
-            pushDownEqualJoinConditions(
-                operand,
-                leftCount,
-                rightCount,
-                extraLeftExprs,
-                extraRightExprs,
-                builder);
-        final List<RexNode> remainingOperands = Util.skip(operands, i + 1);
-        final int left3 = leftCount + extraLeftExprs.size();
-        fix(remainingOperands, left2, left3);
-        fix(list, left2, left3);
-        list.add(e);
+        if (operand instanceof RexCall) {
+          operand = collapseExpandedIsNotDistinctFromExpr(
+              (RexCall) operand, builder);
+        }
+        if (node.getKind() == SqlKind.AND
+            && operand.getKind() != SqlKind.EQUALS
+            && operand.getKind() != SqlKind.IS_NOT_DISTINCT_FROM) {
+          // one of the join condition is neither EQ nor INDF
+          list.add(operand);
+        } else {
+          final int left2 = leftCount + extraLeftExprs.size();
+          final RexNode e =
+              pushDownEqualJoinConditions(
+                  operand,
+                  leftCount,
+                  rightCount,
+                  extraLeftExprs,
+                  extraRightExprs,
+                  builder);
+          if (!e.equals(operand)) {
+            final List<RexNode> remainingOperands = Util.skip(operands, i + 1);
+            final int left3 = leftCount + extraLeftExprs.size();
+            fix(remainingOperands, left2, left3);
+            fix(list, left2, left3);
+          }
+          list.add(e);
+        }
       }
       if (!list.equals(call.getOperands())) {
         return call.clone(call.getType(), list);
@@ -3548,6 +3701,171 @@ public abstract class RelOptUtil {
   }
 
   //~ Inner Classes ----------------------------------------------------------
+
+  /**
+   * A {@code RelShuttle} which propagates all the hints of relational expression to
+   * their children nodes.
+   *
+   * <p>Given a plan:
+   *
+   * <blockquote><pre>
+   *            Filter (Hint1)
+   *                |
+   *               Join
+   *              /    \
+   *            Scan  Project (Hint2)
+   *                     |
+   *                    Scan2
+   * </pre></blockquote>
+   *
+   * <p>Every hint has a {@code inheritPath} (integers list) which records its propagate path,
+   * number `0` represents the hint is propagated from the first(left) child,
+   * number `1` represents the hint is propagated from the second(right) child,
+   * so the plan would have hints path as follows
+   * (assumes each hint can be propagated to all child nodes):
+   *
+   * <ul>
+   *   <li>Filter would have hints {Hint1[]}</li>
+   *   <li>Join would have hints {Hint1[0]}</li>
+   *   <li>Scan would have hints {Hint1[0, 0]}</li>
+   *   <li>Project would have hints {Hint1[0,1], Hint2[]}</li>
+   *   <li>Scan2 would have hints {[Hint1[0, 1, 0], Hint2[0]}</li>
+   * </ul>
+   */
+  private static class RelHintPropagateShuttle extends RelShuttleImpl {
+    /**
+     * Stack recording the hints and its current inheritPath.
+     */
+    private final Deque<Pair<List<RelHint>, Deque<Integer>>> inheritPaths =
+        new ArrayDeque<>();
+
+    /**
+     * The hint strategies to decide if a hint should be attached to
+     * a relational expression.
+     */
+    private final HintStrategyTable hintStrategies;
+
+    RelHintPropagateShuttle(HintStrategyTable hintStrategies) {
+      this.hintStrategies = hintStrategies;
+    }
+
+    /**
+     * Visits a particular child of a parent.
+     */
+    protected RelNode visitChild(RelNode parent, int i, RelNode child) {
+      inheritPaths.forEach(inheritPath -> inheritPath.right.push(i));
+      try {
+        RelNode child2 = child.accept(this);
+        if (child2 != child) {
+          final List<RelNode> newInputs = new ArrayList<>(parent.getInputs());
+          newInputs.set(i, child2);
+          return parent.copy(parent.getTraitSet(), newInputs);
+        }
+        return parent;
+      } finally {
+        inheritPaths.forEach(inheritPath -> inheritPath.right.pop());
+      }
+    }
+
+    public RelNode visit(LogicalJoin join) {
+      final LogicalJoin join1 = (LogicalJoin) super.visit(join);
+      return attachHints(join1);
+    }
+
+    public RelNode visit(LogicalProject project) {
+      final List<RelHint> topHints = project.getHints();
+      final boolean hasHints = topHints != null && topHints.size() > 0;
+      if (hasHints) {
+        inheritPaths.push(Pair.of(topHints, new ArrayDeque<>()));
+      }
+      final RelNode project1 = super.visit(project);
+      if (hasHints) {
+        inheritPaths.pop();
+      }
+      return attachHints(project1);
+    }
+
+    public RelNode visit(TableScan scan) {
+      TableScan scan1 = (TableScan) super.visit(scan);
+      return attachHints(scan1);
+    }
+
+    private RelNode attachHints(RelNode original) {
+      assert original instanceof Hintable;
+      if (inheritPaths.size() > 0) {
+        final List<RelHint> hints = inheritPaths.stream()
+            .sorted(Comparator.comparingInt(o -> o.right.size()))
+            .map(path -> copyWithInheritPath(path.left, path.right))
+            .reduce(new ArrayList<>(), (acc, hints1) -> {
+              acc.addAll(hints1);
+              return acc;
+            });
+        final List<RelHint> filteredHints = hintStrategies.apply(hints, original);
+        if (filteredHints.size() > 0) {
+          return ((Hintable) original).attachHints(filteredHints);
+        }
+      }
+      return original;
+    }
+
+    private static List<RelHint> copyWithInheritPath(List<RelHint> hints,
+        Deque<Integer> inheritPath) {
+      // Copy the Dequeue in reverse order.
+      final List<Integer> path = new ArrayList<>();
+      final Iterator<Integer> iterator = inheritPath.descendingIterator();
+      while (iterator.hasNext()) {
+        path.add(iterator.next());
+      }
+      return hints.stream()
+          .map(hint -> hint.copy(path))
+          .collect(Collectors.toList());
+    }
+  }
+
+  /**
+   * A {@code RelShuttle} which resets all the hints of a relational expression to
+   * what they are originally like.
+   *
+   * <p>This would trigger a reverse transformation of what
+   * {@link RelHintPropagateShuttle} does.
+   *
+   * <p>Transformation rules:
+   *
+   * <ul>
+   *   <li>Project: remove the hints that have non-empty inherit path
+   *   (which means the hint was not originally declared from it); </li>
+   *   <li>Join: remove all the hints;</li>
+   *   <li>TableScan: remove the hints that have non-empty inherit path.</li>
+   * </ul>
+   *
+   */
+  private static class ResetHintsShuttle extends RelShuttleImpl {
+    public RelNode visit(LogicalJoin join) {
+      final LogicalJoin join1 = (LogicalJoin) super.visit(join);
+      return resetHints(join1);
+    }
+
+    public RelNode visit(LogicalProject project) {
+      final LogicalProject project1 = (LogicalProject) super.visit(project);
+      return resetHints(project1);
+    }
+
+    public RelNode visit(TableScan scan) {
+      TableScan scan1 = (TableScan) super.visit(scan);
+      return resetHints(scan1);
+    }
+
+    private static RelNode resetHints(Hintable hintable) {
+      if (hintable.getHints().size() > 0) {
+        final List<RelHint> resetHints = hintable.getHints().stream()
+            .filter(hint -> hint.inheritPath.size() == 0)
+            .collect(Collectors.toList());
+        return hintable.withHints(resetHints);
+      } else {
+        return (RelNode) hintable;
+      }
+    }
+  }
 
   /** Visitor that finds all variables used but not stopped in an expression. */
   private static class VariableSetVisitor extends RelVisitor {
@@ -3859,6 +4177,11 @@ public abstract class RelOptUtil {
       }
       return BOTH;
     }
+
+    public boolean opposite(Side side) {
+      return (this == LEFT && side == RIGHT)
+          || (this == RIGHT && side == LEFT);
+    }
   }
 
   /** Shuttle that finds correlation variables inside a given relational
@@ -3891,12 +4214,4 @@ public abstract class RelOptUtil {
       this.outerJoin = outerJoin;
     }
   }
-
-  /** Check if it is the join whose condition is based on column equality,
-   * this mostly depends on the physical implementation of the join. */
-  public static boolean forceEquiJoin(Join join) {
-    return join.isSemiJoin() || join instanceof EquiJoin;
-  }
 }
-
-// End RelOptUtil.java

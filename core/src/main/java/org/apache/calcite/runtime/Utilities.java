@@ -219,6 +219,9 @@ public class Utilities {
             : v1 == null ? -1
                 : FlatLists.ComparableListImpl.compare(v0, v1);
   }
-}
 
-// End Utilities.java
+  /** Creates a pattern builder. */
+  public static Pattern.PatternBuilder patternBuilder() {
+    return Pattern.builder();
+  }
+}

@@ -29,10 +29,10 @@ public class EnumerableRepeatUnionRule extends ConverterRule {
 
   EnumerableRepeatUnionRule() {
     super(
-      LogicalRepeatUnion.class,
-      Convention.NONE,
-      EnumerableConvention.INSTANCE,
-      "EnumerableRepeatUnionRule");
+        LogicalRepeatUnion.class,
+        Convention.NONE,
+        EnumerableConvention.INSTANCE,
+        "EnumerableRepeatUnionRule");
 
   }
 
@@ -49,8 +49,6 @@ public class EnumerableRepeatUnionRule extends ConverterRule {
         convert(seedRel, seedRel.getTraitSet().replace(out)),
         convert(iterativeRel, iterativeRel.getTraitSet().replace(out)),
         union.all,
-        union.maxRep);
+        union.iterationLimit);
   }
 }
-
-// End EnumerableRepeatUnionRule.java

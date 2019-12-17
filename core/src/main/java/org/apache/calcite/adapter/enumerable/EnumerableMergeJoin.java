@@ -21,24 +21,24 @@ import org.apache.calcite.linq4j.tree.BlockBuilder;
 import org.apache.calcite.linq4j.tree.Expression;
 import org.apache.calcite.linq4j.tree.Expressions;
 import org.apache.calcite.linq4j.tree.ParameterExpression;
-import org.apache.calcite.linq4j.tree.Types;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptCost;
 import org.apache.calcite.plan.RelOptPlanner;
 import org.apache.calcite.plan.RelTraitSet;
-import org.apache.calcite.rel.InvalidRelException;
 import org.apache.calcite.rel.RelCollation;
 import org.apache.calcite.rel.RelCollationTraitDef;
 import org.apache.calcite.rel.RelCollations;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.CorrelationId;
-import org.apache.calcite.rel.core.EquiJoin;
+import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.metadata.RelMdCollation;
 import org.apache.calcite.rel.metadata.RelMetadataQuery;
 import org.apache.calcite.rel.type.RelDataType;
+import org.apache.calcite.rex.RexBuilder;
 import org.apache.calcite.rex.RexLiteral;
 import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.rex.RexUtil;
 import org.apache.calcite.util.BuiltInMethod;
 import org.apache.calcite.util.ImmutableIntList;
 import org.apache.calcite.util.Pair;
@@ -54,7 +54,7 @@ import java.util.Set;
 /** Implementation of {@link org.apache.calcite.rel.core.Join} in
  * {@link EnumerableConvention enumerable calling convention} using
  * a merge algorithm. */
-public class EnumerableMergeJoin extends EquiJoin implements EnumerableRel {
+public class EnumerableMergeJoin extends Join implements EnumerableRel {
   EnumerableMergeJoin(
       RelOptCluster cluster,
       RelTraitSet traits,
@@ -62,8 +62,7 @@ public class EnumerableMergeJoin extends EquiJoin implements EnumerableRel {
       RelNode right,
       RexNode condition,
       Set<CorrelationId> variablesSet,
-      JoinRelType joinType)
-      throws InvalidRelException {
+      JoinRelType joinType) {
     super(cluster, traits, left, right, condition, variablesSet, joinType);
     final List<RelCollation> collations =
         traits.getTraits(RelCollationTraitDef.INSTANCE);
@@ -74,7 +73,7 @@ public class EnumerableMergeJoin extends EquiJoin implements EnumerableRel {
   EnumerableMergeJoin(RelOptCluster cluster, RelTraitSet traits, RelNode left,
       RelNode right, RexNode condition, ImmutableIntList leftKeys,
       ImmutableIntList rightKeys, Set<CorrelationId> variablesSet,
-      JoinRelType joinType) throws InvalidRelException {
+      JoinRelType joinType) {
     this(cluster, traits, left, right, condition, variablesSet, joinType);
   }
 
@@ -82,15 +81,14 @@ public class EnumerableMergeJoin extends EquiJoin implements EnumerableRel {
   EnumerableMergeJoin(RelOptCluster cluster, RelTraitSet traits, RelNode left,
       RelNode right, RexNode condition, ImmutableIntList leftKeys,
       ImmutableIntList rightKeys, JoinRelType joinType,
-      Set<String> variablesStopped) throws InvalidRelException {
+      Set<String> variablesStopped) {
     this(cluster, traits, left, right, condition, leftKeys, rightKeys,
         CorrelationId.setOf(variablesStopped), joinType);
   }
 
   public static EnumerableMergeJoin create(RelNode left, RelNode right,
       RexLiteral condition, ImmutableIntList leftKeys,
-      ImmutableIntList rightKeys, JoinRelType joinType)
-      throws InvalidRelException {
+      ImmutableIntList rightKeys, JoinRelType joinType) {
     final RelOptCluster cluster = right.getCluster();
     RelTraitSet traitSet = cluster.traitSet();
     if (traitSet.isEnabled(RelCollationTraitDef.INSTANCE)) {
@@ -106,14 +104,8 @@ public class EnumerableMergeJoin extends EquiJoin implements EnumerableRel {
   @Override public EnumerableMergeJoin copy(RelTraitSet traitSet,
       RexNode condition, RelNode left, RelNode right, JoinRelType joinType,
       boolean semiJoinDone) {
-    try {
-      return new EnumerableMergeJoin(getCluster(), traitSet, left, right,
-          condition, variablesSet, joinType);
-    } catch (InvalidRelException e) {
-      // Semantic error not possible. Must be a bug. Convert to
-      // internal error.
-      throw new AssertionError(e);
-    }
+    return new EnumerableMergeJoin(getCluster(), traitSet, left, right,
+        condition, variablesSet, joinType);
   }
 
   @Override public RelOptCost computeSelfCost(RelOptPlanner planner,
@@ -155,16 +147,19 @@ public class EnumerableMergeJoin extends EquiJoin implements EnumerableRel {
                   right.getRowType().getFieldList().get(pair.right).getType()));
       final Type keyClass = typeFactory.getJavaClass(keyType);
       leftExpressions.add(
-          Types.castIfNecessary(keyClass,
-              leftResult.physType.fieldReference(left_, pair.left)));
+          EnumUtils.convert(
+              leftResult.physType.fieldReference(left_, pair.left), keyClass));
       rightExpressions.add(
-          Types.castIfNecessary(keyClass,
-              rightResult.physType.fieldReference(right_, pair.right)));
+          EnumUtils.convert(
+              rightResult.physType.fieldReference(right_, pair.right), keyClass));
     }
     final PhysType leftKeyPhysType =
         leftResult.physType.project(joinInfo.leftKeys, JavaRowFormat.LIST);
     final PhysType rightKeyPhysType =
         rightResult.physType.project(joinInfo.rightKeys, JavaRowFormat.LIST);
+    final RexBuilder rexBuilder = getCluster().getRexBuilder();
+    final RexNode nonEquiCondition = RexUtil.composeConjunction(
+        getCluster().getRexBuilder(), joinInfo.nonEquiConditions, false);
     return implementor.result(
         physType,
         builder.append(
@@ -177,6 +172,9 @@ public class EnumerableMergeJoin extends EquiJoin implements EnumerableRel {
                         leftKeyPhysType.record(leftExpressions), left_),
                     Expressions.lambda(
                         rightKeyPhysType.record(rightExpressions), right_),
+                    EnumUtils.generatePredicate(
+                        implementor, rexBuilder, left, right, leftResult.physType,
+                        rightResult.physType, nonEquiCondition),
                     EnumUtils.joinSelector(joinType,
                         physType,
                         ImmutableList.of(
@@ -187,5 +185,3 @@ public class EnumerableMergeJoin extends EquiJoin implements EnumerableRel {
                         joinType.generatesNullsOnRight())))).toBlock());
   }
 }
-
-// End EnumerableMergeJoin.java

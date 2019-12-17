@@ -405,6 +405,7 @@ class RuleQueue {
       dump(pw);
       pw.flush();
       LOGGER.trace(sw.toString());
+      planner.getRoot().getCluster().invalidateMetadataQuery();
     }
   }
 
@@ -695,5 +696,3 @@ class RuleQueue {
     }
   }
 }
-
-// End RuleQueue.java

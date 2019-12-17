@@ -21,11 +21,11 @@ import org.apache.calcite.rel.type.RelDataType;
 import org.apache.calcite.rel.type.RelDataTypeSystem;
 import org.apache.calcite.rel.type.RelDataTypeSystemImpl;
 import org.apache.calcite.sql.SqlAbstractDateTimeLiteral;
+import org.apache.calcite.sql.SqlAlienSystemTypeNameSpec;
 import org.apache.calcite.sql.SqlCall;
 import org.apache.calcite.sql.SqlDataTypeSpec;
 import org.apache.calcite.sql.SqlDateLiteral;
 import org.apache.calcite.sql.SqlDialect;
-import org.apache.calcite.sql.SqlIdentifier;
 import org.apache.calcite.sql.SqlLiteral;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.SqlTimeLiteral;
@@ -38,11 +38,14 @@ import org.apache.calcite.sql.fun.SqlStdOperatorTable;
 import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.type.SqlTypeName;
 
+import com.google.common.collect.ImmutableList;
+
+import java.util.List;
+
 /**
  * A <code>SqlDialect</code> implementation for the Oracle database.
  */
 public class OracleSqlDialect extends SqlDialect {
-
   /** OracleDB type system. */
   private static final RelDataTypeSystem ORACLE_TYPE_SYSTEM =
       new RelDataTypeSystemImpl() {
@@ -57,11 +60,12 @@ public class OracleSqlDialect extends SqlDialect {
         }
       };
 
-  public static final SqlDialect DEFAULT =
-      new OracleSqlDialect(EMPTY_CONTEXT
-          .withDatabaseProduct(DatabaseProduct.ORACLE)
-          .withIdentifierQuoteString("\"")
-          .withDataTypeSystem(ORACLE_TYPE_SYSTEM));
+  public static final SqlDialect.Context DEFAULT_CONTEXT = SqlDialect.EMPTY_CONTEXT
+      .withDatabaseProduct(SqlDialect.DatabaseProduct.ORACLE)
+      .withIdentifierQuoteString("\"")
+      .withDataTypeSystem(ORACLE_TYPE_SYSTEM);
+
+  public static final SqlDialect DEFAULT = new OracleSqlDialect(DEFAULT_CONTEXT);
 
   /** Creates an OracleSqlDialect. */
   public OracleSqlDialect(Context context) {
@@ -85,23 +89,24 @@ public class OracleSqlDialect extends SqlDialect {
     String castSpec;
     switch (type.getSqlTypeName()) {
     case SMALLINT:
-      castSpec = "_NUMBER(5)";
+      castSpec = "NUMBER(5)";
       break;
     case INTEGER:
-      castSpec = "_NUMBER(10)";
+      castSpec = "NUMBER(10)";
       break;
     case BIGINT:
-      castSpec = "_NUMBER(19)";
+      castSpec = "NUMBER(19)";
       break;
     case DOUBLE:
-      castSpec = "_DOUBLE PRECISION";
+      castSpec = "DOUBLE PRECISION";
       break;
     default:
       return super.getCastSpec(type);
     }
 
-    return new SqlDataTypeSpec(new SqlIdentifier(castSpec, SqlParserPos.ZERO),
-        -1, -1, null, null, SqlParserPos.ZERO);
+    return new SqlDataTypeSpec(
+        new SqlAlienSystemTypeNameSpec(castSpec, type.getSqlTypeName(), SqlParserPos.ZERO),
+        SqlParserPos.ZERO);
   }
 
   @Override protected boolean allowsAs() {
@@ -115,17 +120,21 @@ public class OracleSqlDialect extends SqlDialect {
   @Override public void unparseDateTimeLiteral(SqlWriter writer,
       SqlAbstractDateTimeLiteral literal, int leftPrec, int rightPrec) {
     if (literal instanceof SqlTimestampLiteral) {
-      writer.literal("TO_TIMESTAMP ('"
+      writer.literal("TO_TIMESTAMP('"
           + literal.toFormattedString() + "', 'YYYY-MM-DD HH24:MI:SS.FF')");
     } else if (literal instanceof SqlDateLiteral) {
-      writer.literal("TO_DATE ('"
+      writer.literal("TO_DATE('"
           + literal.toFormattedString() + "', 'YYYY-MM-DD')");
     } else if (literal instanceof SqlTimeLiteral) {
-      writer.literal("TO_TIME ('"
+      writer.literal("TO_TIME('"
           + literal.toFormattedString() + "', 'HH24:MI:SS.FF')");
     } else {
       super.unparseDateTimeLiteral(writer, literal, leftPrec, rightPrec);
     }
+  }
+
+  @Override public List<String> getSingleRowTableName() {
+    return ImmutableList.of("DUAL");
   }
 
   @Override public void unparseCall(SqlWriter writer, SqlCall call,
@@ -154,5 +163,3 @@ public class OracleSqlDialect extends SqlDialect {
     }
   }
 }
-
-// End OracleSqlDialect.java

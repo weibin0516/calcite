@@ -25,6 +25,8 @@ import org.apache.calcite.rel.core.JoinInfo;
 import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.rel.core.SetOp;
 import org.apache.calcite.rel.core.Sort;
+import org.apache.calcite.rel.core.TableModify;
+import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rex.RexInputRef;
 import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.util.BuiltInMethod;
@@ -71,6 +73,11 @@ public class RelMdUniqueKeys
   public Set<ImmutableBitSet> getUniqueKeys(Correlate rel, RelMetadataQuery mq,
       boolean ignoreNulls) {
     return mq.getUniqueKeys(rel.getLeft(), ignoreNulls);
+  }
+
+  public Set<ImmutableBitSet> getUniqueKeys(TableModify rel, RelMetadataQuery mq,
+      boolean ignoreNulls) {
+    return mq.getUniqueKeys(rel.getInput(), ignoreNulls);
   }
 
   public Set<ImmutableBitSet> getUniqueKeys(Project rel, RelMetadataQuery mq,
@@ -220,6 +227,15 @@ public class RelMdUniqueKeys
     return ImmutableSet.of();
   }
 
+  public Set<ImmutableBitSet> getUniqueKeys(TableScan rel, RelMetadataQuery mq,
+      boolean ignoreNulls) {
+    final List<ImmutableBitSet> keys = rel.getTable().getKeys();
+    for (ImmutableBitSet key : keys) {
+      assert rel.getTable().isKey(key);
+    }
+    return ImmutableSet.copyOf(keys);
+  }
+
   // Catch-all rule when none of the others apply.
   public Set<ImmutableBitSet> getUniqueKeys(RelNode rel, RelMetadataQuery mq,
       boolean ignoreNulls) {
@@ -227,5 +243,3 @@ public class RelMdUniqueKeys
     return null;
   }
 }
-
-// End RelMdUniqueKeys.java

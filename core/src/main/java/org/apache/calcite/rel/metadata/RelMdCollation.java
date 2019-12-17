@@ -33,9 +33,11 @@ import org.apache.calcite.rel.core.Calc;
 import org.apache.calcite.rel.core.Filter;
 import org.apache.calcite.rel.core.Join;
 import org.apache.calcite.rel.core.JoinRelType;
+import org.apache.calcite.rel.core.Match;
 import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.rel.core.Sort;
 import org.apache.calcite.rel.core.SortExchange;
+import org.apache.calcite.rel.core.TableModify;
 import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rel.core.Values;
 import org.apache.calcite.rel.core.Window;
@@ -48,6 +50,7 @@ import org.apache.calcite.rex.RexNode;
 import org.apache.calcite.rex.RexProgram;
 import org.apache.calcite.sql.validate.SqlMonotonicity;
 import org.apache.calcite.util.BuiltInMethod;
+import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.ImmutableIntList;
 import org.apache.calcite.util.Pair;
 import org.apache.calcite.util.Util;
@@ -116,7 +119,22 @@ public class RelMdCollation
     return ImmutableList.copyOf(window(mq, rel.getInput(), rel.groups));
   }
 
+  public ImmutableList<RelCollation> collations(Match rel,
+      RelMetadataQuery mq) {
+    return ImmutableList.copyOf(
+        match(mq, rel.getInput(), rel.getRowType(), rel.getPattern(),
+            rel.isStrictStart(), rel.isStrictEnd(),
+            rel.getPatternDefinitions(), rel.getMeasures(), rel.getAfter(),
+            rel.getSubsets(), rel.isAllRows(), rel.getPartitionKeys(),
+            rel.getOrderKeys(), rel.getInterval()));
+  }
+
   public ImmutableList<RelCollation> collations(Filter rel,
+      RelMetadataQuery mq) {
+    return mq.collations(rel.getInput());
+  }
+
+  public ImmutableList<RelCollation> collations(TableModify rel,
       RelMetadataQuery mq) {
     return mq.collations(rel.getInput());
   }
@@ -236,7 +254,7 @@ public class RelMdCollation
         program
             .getProjectList()
             .stream()
-            .map((p) -> program.expandLocalRef(p))
+            .map(program::expandLocalRef)
             .collect(Collectors.toList());
     return project(mq, input, projects);
   }
@@ -313,6 +331,18 @@ public class RelMdCollation
    * input are preserved. */
   public static List<RelCollation> window(RelMetadataQuery mq, RelNode input,
       ImmutableList<Window.Group> groups) {
+    return mq.collations(input);
+  }
+
+  /** Helper method to determine a
+   * {@link org.apache.calcite.rel.core.Match}'s collation. */
+  public static List<RelCollation> match(RelMetadataQuery mq, RelNode input,
+       RelDataType rowType, RexNode pattern,
+       boolean strictStart, boolean strictEnd,
+       Map<String, RexNode> patternDefinitions, Map<String, RexNode> measures,
+       RexNode after, Map<String, ? extends SortedSet<String>> subsets,
+       boolean allRows, ImmutableBitSet partitionKeys, RelCollation orderKeys,
+       RexNode interval) {
     return mq.collations(input);
   }
 
@@ -450,6 +480,12 @@ public class RelMdCollation
     return mq.collations(left);
   }
 
+  public static List<RelCollation> enumerableBatchNestedLoopJoin(RelMetadataQuery mq,
+      RelNode left, RelNode right, JoinRelType joinType) {
+    // The current implementation always preserve the sort order of the left input
+    return mq.collations(left);
+  }
+
   private static List<RelCollation> enumerableJoin0(RelMetadataQuery mq,
       RelNode left, RelNode right, JoinRelType joinType) {
     // The current implementation can preserve the sort order of the left input if one of the
@@ -477,5 +513,3 @@ public class RelMdCollation
     return ImmutableList.of();
   }
 }
-
-// End RelMdCollation.java

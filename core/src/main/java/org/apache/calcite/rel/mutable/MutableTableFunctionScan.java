@@ -69,7 +69,7 @@ public class MutableTableFunctionScan extends MutableMultiRel {
             ((MutableTableFunctionScan) obj).elementType)
         && Objects.equals(columnMappings,
             ((MutableTableFunctionScan) obj).columnMappings)
-        && inputs.equals(((MutableSetOp) obj).getInputs());
+        && inputs.equals(((MutableTableFunctionScan) obj).getInputs());
   }
 
   @Override public int hashCode() {
@@ -92,5 +92,3 @@ public class MutableTableFunctionScan extends MutableMultiRel {
   }
 
 }
-
-// End MutableTableFunctionScan.java

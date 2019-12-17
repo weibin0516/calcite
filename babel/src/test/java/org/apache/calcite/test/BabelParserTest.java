@@ -24,15 +24,15 @@ import org.apache.calcite.sql.parser.babel.SqlBabelParserImpl;
 
 import com.google.common.base.Throwables;
 
-import org.junit.Ignore;
-import org.junit.Test;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
 import java.util.Locale;
 import java.util.Objects;
 
 import static org.hamcrest.CoreMatchers.is;
-import static org.junit.Assert.assertThat;
+import static org.hamcrest.MatcherAssert.assertThat;
 
 /**
  * Tests the "Babel" SQL parser, that understands all dialects of SQL.
@@ -103,7 +103,7 @@ public class BabelParserTest extends SqlParserTest {
   }
 
   /** Tests that there are no reserved keywords. */
-  @Ignore
+  @Disabled
   @Test public void testKeywords() {
     final String[] reserved = {"AND", "ANY", "END-EXEC"};
     final StringBuilder sql = new StringBuilder("select ");
@@ -150,9 +150,8 @@ public class BabelParserTest extends SqlParserTest {
    * Optimize global LOOKAHEAD for SQL parsers</a>
    */
   @Test public void testCaseExpressionBabel() {
-    checkFails(
-        "case x when 2, 4 then 3 ^when^ then 5 else 4 end",
-        "(?s)Encountered \"when then\" at .*");
+    sql("case x when 2, 4 then 3 ^when^ then 5 else 4 end")
+        .fails("(?s)Encountered \"when then\" at .*");
   }
 
   /** In Redshift, DATE is a function. It requires special treatment in the
@@ -162,6 +161,20 @@ public class BabelParserTest extends SqlParserTest {
     final String expected = "SELECT `DATE`(`X`)\n"
         + "FROM `T`";
     sql("select date(x) from t").ok(expected);
+  }
+
+  /** In Redshift, PostgreSQL the DATEADD, DATEDIFF and DATE_PART functions have
+   * ordinary function syntax except that its first argument is a time unit
+   * (e.g. DAY). We must not parse that first argument as an identifier. */
+  @Test public void testRedshiftFunctionsWithDateParts() {
+    final String sql = "SELECT DATEADD(day, 1, t),\n"
+        + " DATEDIFF(week, 2, t),\n"
+        + " DATE_PART(year, t) FROM mytable";
+    final String expected = "SELECT `DATEADD`(DAY, 1, `T`),"
+        + " `DATEDIFF`(WEEK, 2, `T`), `DATE_PART`(YEAR, `T`)\n"
+        + "FROM `MYTABLE`";
+
+    sql(sql).ok(expected);
   }
 
   /** PostgreSQL and Redshift allow TIMESTAMP literals that contain only a
@@ -219,6 +232,27 @@ public class BabelParserTest extends SqlParserTest {
       }
     };
   }
-}
 
-// End BabelParserTest.java
+  /** Tests parsing PostgreSQL-style "::" cast operator. */
+  @Test public void testParseInfixCast()  {
+    checkParseInfixCast("integer");
+    checkParseInfixCast("varchar");
+    checkParseInfixCast("boolean");
+    checkParseInfixCast("double");
+    checkParseInfixCast("bigint");
+
+    final String sql = "select -('12' || '.34')::VARCHAR(30)::INTEGER as x\n"
+        + "from t";
+    final String expected = ""
+        + "SELECT (- ('12' || '.34') :: VARCHAR(30) :: INTEGER) AS `X`\n"
+        + "FROM `T`";
+    sql(sql).ok(expected);
+  }
+
+  private void checkParseInfixCast(String sqlType) {
+    String sql = "SELECT x::" + sqlType + " FROM (VALUES (1, 2)) as tbl(x,y)";
+    String expected = "SELECT `X` :: " + sqlType.toUpperCase(Locale.ROOT) + "\n"
+        + "FROM (VALUES (ROW(1, 2))) AS `TBL` (`X`, `Y`)";
+    sql(sql).ok(expected);
+  }
+}

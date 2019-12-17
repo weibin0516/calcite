@@ -28,6 +28,7 @@ import org.apache.calcite.rel.core.Correlate;
 import org.apache.calcite.rel.core.CorrelationId;
 import org.apache.calcite.rel.core.Exchange;
 import org.apache.calcite.rel.core.JoinRelType;
+import org.apache.calcite.rel.core.Project;
 import org.apache.calcite.rel.core.RelFactories;
 import org.apache.calcite.rel.core.TableFunctionScan;
 import org.apache.calcite.rel.core.TableModify;
@@ -66,7 +67,7 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 
 import org.hamcrest.Matcher;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -84,12 +85,14 @@ import javax.annotation.Nonnull;
 
 import static org.apache.calcite.test.Matchers.hasTree;
 
+import static org.hamcrest.CoreMatchers.allOf;
 import static org.hamcrest.CoreMatchers.containsString;
 import static org.hamcrest.CoreMatchers.is;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertThat;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Unit test for {@link RelBuilder}.
@@ -699,6 +702,33 @@ public class RelBuilderTest {
     assertThat(root, hasTree(expected));
   }
 
+  @Test public void testProjectWithAliasFromScan() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    RelNode root =
+        builder.scan("EMP")
+            .project(builder.field(1, "EMP", "ENAME"))
+            .build();
+    final String expected =
+        "LogicalProject(ENAME=[$1])\n"
+            + "  LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(root, hasTree(expected));
+  }
+
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-3228">[CALCITE-3228]
+   * IllegalArgumentException in getMapping() for project containing same reference</a>. */
+  @Test public void testProjectMapping() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    RelNode root =
+            builder.scan("EMP")
+                    .project(builder.field(0), builder.field(0))
+                    .build();
+    assertTrue(root instanceof Project);
+    Project project = (Project) root;
+    Mappings.TargetMapping mapping = project.getMapping();
+    assertTrue(mapping == null);
+  }
+
   private void project1(int value, SqlTypeName sqlTypeName, String message, String expected) {
     final RelBuilder builder = RelBuilder.create(config().build());
     RexBuilder rex = builder.getRexBuilder();
@@ -1019,6 +1049,33 @@ public class RelBuilderTest {
             builder.sum(builder.field(2)).as("S2"),
             builder.sum(builder.field(1)).as("S1b"))
         .build();
+  }
+
+  /** Tests eliminating duplicate aggregate calls, when some of them are only
+   * seen to be duplicates when a spurious "DISTINCT" has been eliminated.
+   *
+   * <p>Note that "M2" and "MD2" are based on the same field, because
+   * "MIN(DISTINCT $2)" is identical to "MIN($2)". The same is not true for
+   * "SUM". */
+  @Test public void testAggregateEliminatesDuplicateDistinctCalls() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    RelNode root = builder.scan("EMP")
+        .aggregate(builder.groupKey(2),
+            builder.sum(builder.field(1)).as("S1"),
+            builder.sum(builder.field(1)).distinct().as("SD1"),
+            builder.count().as("C"),
+            builder.min(builder.field(2)).distinct().as("MD2"),
+            builder.min(builder.field(2)).as("M2"),
+            builder.min(builder.field(2)).distinct().as("MD2b"),
+            builder.sum(builder.field(1)).distinct().as("S1b"))
+        .build();
+    final String expected = ""
+        + "LogicalProject(JOB=[$0], S1=[$1], SD1=[$2], C=[$3], MD2=[$4], "
+        + "M2=[$4], MD2b=[$4], S1b=[$2])\n"
+        + "  LogicalAggregate(group=[{2}], S1=[SUM($1)], "
+        + "SD1=[SUM(DISTINCT $1)], C=[COUNT()], MD2=[MIN($2)])\n"
+        + "    LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(root, hasTree(expected));
   }
 
   @Test public void testAggregateFilter() {
@@ -1403,9 +1460,9 @@ public class RelBuilderTest {
             .repeatUnion("DELTA_TABLE", true)
             .build();
     final String expected = "LogicalRepeatUnion(all=[true])\n"
-        + "  LogicalTableSpool(readType=[LAZY], writeType=[LAZY], tableName=[DELTA_TABLE])\n"
+        + "  LogicalTableSpool(readType=[LAZY], writeType=[LAZY], table=[[DELTA_TABLE]])\n"
         + "    LogicalValues(tuples=[[{ 1 }]])\n"
-        + "  LogicalTableSpool(readType=[LAZY], writeType=[LAZY], tableName=[DELTA_TABLE])\n"
+        + "  LogicalTableSpool(readType=[LAZY], writeType=[LAZY], table=[[DELTA_TABLE]])\n"
         + "    LogicalProject($f0=[+($0, 1)])\n"
         + "      LogicalFilter(condition=[<($0, 10)])\n"
         + "        LogicalTableScan(table=[[DELTA_TABLE]])\n";
@@ -1443,9 +1500,9 @@ public class RelBuilderTest {
             .repeatUnion("AUX", true)
             .build();
     final String expected = "LogicalRepeatUnion(all=[true])\n"
-        + "  LogicalTableSpool(readType=[LAZY], writeType=[LAZY], tableName=[AUX])\n"
+        + "  LogicalTableSpool(readType=[LAZY], writeType=[LAZY], table=[[AUX]])\n"
         + "    LogicalValues(tuples=[[{ 0, 1 }]])\n"
-        + "  LogicalTableSpool(readType=[LAZY], writeType=[LAZY], tableName=[AUX])\n"
+        + "  LogicalTableSpool(readType=[LAZY], writeType=[LAZY], table=[[AUX]])\n"
         + "    LogicalProject(n=[+($0, 1)], fact=[*(+($0, 1), $1)])\n"
         + "      LogicalFilter(condition=[<($0, 7)])\n"
         + "        LogicalTableScan(table=[[AUX]])\n";
@@ -1967,6 +2024,105 @@ public class RelBuilderTest {
         + "LogicalProject(DEPTNO=[$7], EMPNO=[$0], MGR=[$3], x=[+($0, $3)])\n"
         + "  LogicalTableScan(table=[[scott, EMP]])\n";
     assertThat(root, hasTree(expected));
+  }
+
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-3462">[CALCITE-3462]
+   * Add projectExcept method in RelBuilder for projecting out expressions</a>. */
+  @Test public void testProjectExceptWithOrdinal() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    RelNode root =
+        builder.scan("EMP")
+            .projectExcept(
+                builder.field(2),
+                builder.field(3))
+            .build();
+    final String expected = ""
+        + "LogicalProject(EMPNO=[$0], ENAME=[$1], HIREDATE=[$4], SAL=[$5], COMM=[$6], DEPTNO=[$7])\n"
+        + "  LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(root, hasTree(expected));
+  }
+
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-3462">[CALCITE-3462]
+   * Add projectExcept method in RelBuilder for projecting out expressions</a>. */
+  @Test public void testProjectExceptWithName() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    RelNode root =
+        builder.scan("EMP")
+            .projectExcept(
+                builder.field("MGR"),
+                builder.field("JOB"))
+            .build();
+    final String expected = ""
+        + "LogicalProject(EMPNO=[$0], ENAME=[$1], HIREDATE=[$4], SAL=[$5], COMM=[$6], DEPTNO=[$7])\n"
+        + "  LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(root, hasTree(expected));
+  }
+
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-3462">[CALCITE-3462]
+   * Add projectExcept method in RelBuilder for projecting out expressions</a>. */
+  @Test public void testProjectExceptWithExplicitAliasAndName() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    RelNode root =
+        builder.scan("EMP")
+            .as("e")
+            .projectExcept(
+                builder.field("e", "MGR"),
+                builder.field("e", "JOB"))
+            .build();
+    final String expected = ""
+        + "LogicalProject(EMPNO=[$0], ENAME=[$1], HIREDATE=[$4], SAL=[$5], COMM=[$6], DEPTNO=[$7])\n"
+        + "  LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(root, hasTree(expected));
+  }
+
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-3462">[CALCITE-3462]
+   * Add projectExcept method in RelBuilder for projecting out expressions</a>. */
+  @Test public void testProjectExceptWithImplicitAliasAndName() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    RelNode root =
+        builder.scan("EMP")
+            .projectExcept(
+                builder.field("EMP", "MGR"),
+                builder.field("EMP", "JOB"))
+            .build();
+    final String expected = ""
+        + "LogicalProject(EMPNO=[$0], ENAME=[$1], HIREDATE=[$4], SAL=[$5], COMM=[$6], DEPTNO=[$7])\n"
+        + "  LogicalTableScan(table=[[scott, EMP]])\n";
+    assertThat(root, hasTree(expected));
+  }
+
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-3462">[CALCITE-3462]
+   * Add projectExcept method in RelBuilder for projecting out expressions</a>. */
+  @Test public void testProjectExceptWithDuplicateField() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> {
+      builder.scan("EMP")
+          .projectExcept(
+            builder.field("EMP", "MGR"),
+            builder.field("EMP", "MGR"));
+    }, "Project should fail since we are trying to remove the same field two times.");
+    assertThat(ex.getMessage(), containsString("Input list contains duplicates."));
+  }
+
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-3462">[CALCITE-3462]
+   * Add projectExcept method in RelBuilder for projecting out expressions</a>. */
+  @Test public void testProjectExceptWithMissingField() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    builder.scan("EMP");
+    RexNode deptnoField = builder.field("DEPTNO");
+    IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> {
+      builder.project(
+            builder.field("EMPNO"),
+            builder.field("ENAME"))
+          .projectExcept(deptnoField);
+    }, "Project should fail since we are trying to remove a field that does not exist.");
+    assertThat(ex.getMessage(), allOf(containsString("Expression"), containsString("not found")));
   }
 
   @Test public void testMultiLevelAlias() {
@@ -2613,7 +2769,7 @@ public class RelBuilderTest {
             measuresBuilder.build(), after, subsets, false,
             partitionKeysBuilder.build(), orderKeysBuilder.build(), interval)
         .build();
-    final String expected = "LogicalMatch(partition=[[$7]], order=[[0]], "
+    final String expected = "LogicalMatch(partition=[[7]], order=[[0]], "
         + "outputFields=[[$7, 'start_nw', 'bottom_nw']], allRows=[false], "
         + "after=[FLAG(SKIP TO NEXT ROW)], pattern=[(('STRT', "
         + "PATTERN_QUANTIFIER('DOWN', 1, -1, false)), "
@@ -2763,6 +2919,31 @@ public class RelBuilderTest {
     }
   }
 
+  @Test public void testExpandViewShouldKeepAlias() throws SQLException {
+    try (Connection connection = DriverManager.getConnection("jdbc:calcite:")) {
+      final Frameworks.ConfigBuilder configBuilder =
+          expandingConfig(connection);
+      final RelOptTable.ViewExpander viewExpander =
+          (RelOptTable.ViewExpander) Frameworks.getPlanner(configBuilder.build());
+      final RelFactories.TableScanFactory tableScanFactory =
+          RelFactories.expandingScanFactory(viewExpander,
+              RelFactories.DEFAULT_TABLE_SCAN_FACTORY);
+      configBuilder.context(Contexts.of(tableScanFactory));
+      final RelBuilder builder = RelBuilder.create(configBuilder.build());
+      RelNode node =
+          builder.scan("MYVIEW")
+              .project(
+                  builder.field(1, "MYVIEW", "EMPNO"),
+                  builder.field(1, "MYVIEW", "ENAME"))
+              .build();
+      String expected =
+          "LogicalProject(EMPNO=[$0], ENAME=[$1])\n"
+              + "  LogicalFilter(condition=[=(1, 1)])\n"
+                  + "    LogicalTableScan(table=[[scott, EMP]])\n";
+      assertThat(node, hasTree(expected));
+    }
+  }
+
   @Test public void testExpandTable() throws SQLException {
     final RelOptTable.ViewExpander viewExpander =
         (rowType, queryString, schemaPath, viewPath) -> null;
@@ -2822,6 +3003,49 @@ public class RelBuilderTest {
             + "  LogicalTableScan(table=[[scott, EMP]])\n";
     assertThat(root, hasTree(expected));
   }
-}
 
-// End RelBuilderTest.java
+  @Test public void testCorrelate() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    final Holder<RexCorrelVariable> v = Holder.of(null);
+    RelNode root = builder.scan("EMP")
+        .variable(v)
+        .scan("DEPT")
+        .filter(
+            builder.equals(builder.field(0),
+                builder.field(v.get(), "DEPTNO")))
+        .correlate(JoinRelType.LEFT, v.get().id, builder.field(2, 0, "DEPTNO"))
+        .build();
+
+    final String expected = ""
+        + "LogicalCorrelate(correlation=[$cor0], joinType=[left], requiredColumns=[{7}])\n"
+        + "  LogicalTableScan(table=[[scott, EMP]])\n"
+        + "  LogicalFilter(condition=[=($0, $cor0.DEPTNO)])\n"
+        + "    LogicalTableScan(table=[[scott, DEPT]])\n";
+    assertThat(root, hasTree(expected));
+  }
+
+  @Test public void testCorrelateWithComplexFields() {
+    final RelBuilder builder = RelBuilder.create(config().build());
+    final Holder<RexCorrelVariable> v = Holder.of(null);
+    RelNode root = builder.scan("EMP")
+        .variable(v)
+        .scan("DEPT")
+        .filter(
+            builder.equals(builder.field(0),
+                builder.field(v.get(), "DEPTNO")))
+        .correlate(JoinRelType.LEFT, v.get().id,
+            builder.field(2, 0, "DEPTNO"),
+            builder.getRexBuilder().makeCall(SqlStdOperatorTable.AS,
+                builder.field(2, 0, "EMPNO"),
+                builder.literal("RENAMED_EMPNO")))
+        .build();
+
+    final String expected = ""
+        + "LogicalCorrelate(correlation=[$cor0], joinType=[left], requiredColumns=[{0, 7}])\n"
+        + "  LogicalProject(RENAMED_EMPNO=[$0], ENAME=[$1], JOB=[$2], MGR=[$3], HIREDATE=[$4], SAL=[$5], COMM=[$6], DEPTNO=[$7])\n"
+        + "    LogicalTableScan(table=[[scott, EMP]])\n"
+        + "  LogicalFilter(condition=[=($0, $cor0.DEPTNO)])\n"
+        + "    LogicalTableScan(table=[[scott, DEPT]])\n";
+    assertThat(root, hasTree(expected));
+  }
+}
